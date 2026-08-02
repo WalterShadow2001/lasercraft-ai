@@ -6,6 +6,9 @@ import { MATERIALS } from '@/types/laser'
 import { generateFromTemplate } from '@/lib/laser/templates'
 import { validateSvg } from '@/lib/laser/validator'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()

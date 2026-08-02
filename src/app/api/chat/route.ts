@@ -8,6 +8,9 @@ import { MATERIALS } from '@/types/laser'
 import { generateFromTemplate, TEMPLATES } from '@/lib/laser/templates'
 import { validateSvg } from '@/lib/laser/validator'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 const SYSTEM_PROMPT = `Eres LaserCraft AI, un asistente experto en diseño de plantillas para corte láser.
 Tu trabajo es conversar con el usuario, entender qué quiere crear, e indicarle
 al sistema QUÉ plantilla usar y CON QUÉ parámetros.
