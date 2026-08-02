@@ -2,7 +2,7 @@
 // Recibe mensajes y devuelve: reply + (opcional) svg generado desde plantilla
 
 import { NextRequest, NextResponse } from 'next/server'
-import ZAI from 'z-ai-web-dev-sdk'
+import { getZai } from '@/lib/zai-wrapper'
 import type { ChatMessage, ChatApiResponse, MaterialInfo } from '@/types/laser'
 import { MATERIALS } from '@/types/laser'
 import { generateFromTemplate, TEMPLATES } from '@/lib/laser/templates'
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
     ]
 
     // Llamar al LLM
-    const zai = await ZAI.create()
+    const zai = await getZai()
     const completion = await zai.chat.completions.create({
       messages: llmMessages,
       temperature: 0.4,
@@ -196,11 +196,17 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     console.error('[/api/chat] error:', err)
+    const errMsg = err instanceof Error ? err.message : 'unknown_error'
+    const isConfigError = errMsg.includes('config') || errMsg.includes('.z-ai-config')
     return NextResponse.json<ChatApiResponse>(
       {
-        reply: 'Ocurrió un error procesando tu mensaje. Intenta de nuevo.',
+        reply: isConfigError
+          ? '⚠️ El agente IA no está configurado en este entorno. Para activarlo, configura las variables ZAI_BASE_URL y ZAI_API_KEY en Vercel, o crea un archivo .z-ai-config con tus credenciales de Z.ai.'
+          : 'Ocurrió un error procesando tu mensaje. Intenta de nuevo en unos segundos.',
         action: 'ask',
-        questions: ['¿Puedes reformular tu petición?'],
+        questions: isConfigError
+          ? ['¿Quieres ver las plantillas disponibles mientras tanto?']
+          : ['¿Puedes reformular tu petición?'],
       },
       { status: 500 },
     )
