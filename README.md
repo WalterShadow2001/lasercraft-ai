@@ -38,9 +38,24 @@ DATABASE_URL="file:./db/custom.db"
 # Turso (producción)
 TURSO_DATABASE_URL="libsql://<tu-db>.turso.io"
 TURSO_AUTH_TOKEN="<tu-token>"
+
+# Z.ai SDK (requerido para el agente IA en producción)
+ZAI_BASE_URL="https://api.z.ai/v1"
+ZAI_API_KEY="<tu-api-key-de-z.ai>"
 ```
 
-En producción, sobrescribe `DATABASE_URL` con la URL de Turso y añade `TURSO_AUTH_TOKEN`.
+En desarrollo local (sandbox Z.ai), el SDK usa automáticamente `/etc/.z-ai-config`. En Vercel u otro host, configura `ZAI_BASE_URL` y `ZAI_API_KEY` con tus credenciales de [chat.z.ai](https://chat.z.ai).
+
+### Cómo obtener credenciales de Z.ai
+
+1. Inicia sesión en [chat.z.ai](https://chat.z.ai)
+2. Abre las DevTools del navegador → Application → Local Storage
+3. Copia el `token` y `userId`
+4. Configura en Vercel:
+   - `ZAI_BASE_URL` = `https://api.z.ai/v1`
+   - `ZAI_API_KEY` = tu API key
+   - `ZAI_TOKEN` = el JWT token (opcional)
+   - `ZAI_USER_ID` = tu userId (opcional)
 
 ## Desarrollo
 
