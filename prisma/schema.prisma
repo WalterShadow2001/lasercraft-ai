@@ -1,0 +1,39 @@
+// Prisma schema para LaserCraft AI (Turso / libSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model SavedDesign {
+  id          String   @id @default(cuid())
+  name        String
+  templateId  String
+  params      String   // JSON serializado
+  svg         String   // SVG completo
+  dimensions  String   // JSON: { width, height, depth }
+  partCount   Int
+  material    String
+  userId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([templateId])
+  @@index([userId])
+}
+
+model ChatSession {
+  id          String   @id @default(cuid())
+  title       String
+  messages    String   // JSON serializado de ChatMessage[]
+  templateId  String?
+  userId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
