@@ -241,13 +241,20 @@ export async function POST(req: NextRequest) {
     const errMsg = err instanceof Error ? err.message : 'unknown_error'
     const isConfigError =
       errMsg.includes('config') || errMsg.includes('.z-ai-config') || errMsg.includes('ZAI_')
+    const isAuthError =
+      errMsg.includes('Authentication Failed') ||
+      errMsg.includes('401') ||
+      errMsg.includes('token expired') ||
+      errMsg.includes('incorrect')
     return NextResponse.json<ChatApiResponse>(
       {
         reply: isConfigError
           ? '⚠️ El agente IA no está configurado. Ve a "Settings" (icono ⚙ en el header) y pega tu token de Z.ai. Lo guardaremos solo en tu navegador (localStorage).'
-          : 'Ocurrió un error procesando tu mensaje. Intenta de nuevo.',
+          : isAuthError
+          ? '⚠️ Tu token de Z.ai no es válido o está expirado. Ve a "Settings" (icono ⚙) y actualízalo. Mientras tanto puedes usar el botón "Plantillas" del header para generar plantillas sin IA.'
+          : '⚠️ Ocurrió un error procesando tu mensaje. Puedes usar el botón "Plantillas" del header para generar directamente sin IA.',
         action: 'ask',
-        questions: ['¿Puedes reformular tu petición?'],
+        questions: ['¿Quieres usar el botón "Plantillas" del header para generar directamente?'],
       },
       { status: 500 },
     )

@@ -508,17 +508,119 @@ function generateSign(params: Record<string, number | string>, material: Materia
 }
 
 // ============================================================
+// PLANTILLA 8: PORTRAIT_FRAME — portaretrato con soporte trasero
+// ============================================================
+
+const frameParams: TemplateParam[] = [
+  { id: 'photoW',   label: 'Ancho foto',   type: 'number', default: 200, min: 50, max: 500, unit: 'mm' },
+  { id: 'photoH',   label: 'Alto foto',     type: 'number', default: 150, min: 50, max: 500, unit: 'mm' },
+  { id: 'border',   label: 'Ancho marco',   type: 'number', default: 25,  min: 10, max: 60,  unit: 'mm' },
+  { id: 'thickness', label: 'Grosor',       type: 'number', default: 6,   min: 3,  max: 12,  unit: 'mm' },
+  { id: 'standAngle', label: 'Ángulo soporte', type: 'select', default: '15', options: ['10', '15', '20', '25'] },
+  { id: 'holeR',    label: 'Radio agujero colgador', type: 'number', default: 3, min: 2, max: 8, unit: 'mm' },
+  { id: 'text',     label: 'Grabado (opcional)', type: 'text', default: '' },
+  { id: 'fontSize',  label: 'Tamaño texto',  type: 'number', default: 14, min: 8, max: 30 },
+]
+
+function generateFrame(params: Record<string, number | string>, material: MaterialInfo): GenerationResult {
+  const photoW = num(params, 'photoW', 200)
+  const photoH = num(params, 'photoH', 150)
+  const b = num(params, 'border', 25)
+  const t = num(params, 'thickness', material.thickness)
+  const standAngle = parseInt(str(params, 'standAngle', '15'))
+  const holeR = num(params, 'holeR', 3)
+  const text = str(params, 'text', '')
+  const fs = num(params, 'fontSize', 14)
+
+  // Marco: dimensiones exteriores
+  const outerW = photoW + 2 * b
+  const outerH = photoH + 2 * b
+
+  // 1) FRENTE DEL MARCO (con ventana rectangular para la foto)
+  const frameT = new Turtle()
+  // Perfil exterior
+  frameT.moveTo(0, 0)
+  frameT.polyline(outerW, 90, outerH, 90, outerW, 90, outerH, 90)
+  // Agujero colgador centrado arriba
+  frameT.circle(outerW / 2, outerH - b / 2, holeR)
+  // Ventana interior (rectangular) — hacer como path separado (push)
+  const inner = new Turtle()
+  inner.moveTo(b, b)
+  inner.polyline(photoW, 90, photoH, 90, photoW, 90, photoH, 90)
+  // Grabado opcional en el borde inferior del marco
+  let engrave = ''
+  if (text) {
+    const et = new Turtle()
+    et.text(outerW / 2, b / 2 + fs / 3, text, fs)
+    engrave = '\n' + et.toSvg('fill="black" stroke="none"')
+  }
+
+  const frontPart: TemplatePart = {
+    id: 'frame-front', label: 'Marco frontal', role: 'front',
+    svg: frameT.toSvg() + '\n' + inner.toSvg('stroke="red" stroke-width="0.4" fill="none"') + engrave,
+    x: 0, y: 0, width: outerW, height: outerH,
+  }
+
+  // 2) RESPALDO (mismo tamaño exterior, sin ventana)
+  const backT = new Turtle()
+  backT.moveTo(0, 0)
+  backT.polyline(outerW, 90, outerH, 90, outerW, 90, outerH, 90)
+  // Bisagra: 2 agujeros pequeños en el borde superior para alambre/clips
+  backT.circle(outerW * 0.3, outerH - 3, 1.5)
+  backT.circle(outerW * 0.7, outerH - 3, 1.5)
+
+  const backPart: TemplatePart = {
+    id: 'frame-back', label: 'Respaldo', role: 'back',
+    svg: backT.toSvg(),
+    x: 0, y: 0, width: outerW, height: outerH,
+  }
+
+  // 3) PIE DE SOPORTE (triangular con ángulo de inclinación)
+  // El pie se talla en el respaldo y se pliega. Lo generamos como pieza separada.
+  const standH = Math.min(outerH * 0.6, 100)
+  const standW = standH * Math.tan((standAngle * Math.PI) / 180)
+  const standT = new Turtle()
+  standT.moveTo(0, 0)
+  // Triángulo con tab pequeño para encajar en el respaldo
+  standT.polyline(standW, 90, t, -90, 5, 90, t, -90, standW, 90)
+  // Cerrar el triángulo volviendo al origen
+  standT.polyline(standH, 90, standW * 2 + 5 + 2 * t, 90)
+  // Agujero para alambre colgador
+  standT.circle(standW / 2, standH * 0.3, holeR)
+
+  const standPart: TemplatePart = {
+    id: 'stand', label: 'Pie de soporte', role: 'handle',
+    svg: standT.toSvg(),
+    x: 0, y: 0,
+    width: standW * 2 + 5 + 2 * t,
+    height: standH,
+  }
+
+  const parts: TemplatePart[] = [frontPart, backPart, standPart]
+  const layout = layoutParts(parts, material)
+
+  return {
+    svg: layout.svg,
+    parts,
+    dimensions: { width: outerW, height: outerH, depth: t },
+    partCount: parts.length,
+    materialUsage: { sheetW: layout.sheetW, sheetH: layout.sheetH, used: layout.used },
+  }
+}
+
+// ============================================================
 // REGISTRO DE PLANTILLAS
 // ============================================================
 
 export const TEMPLATES: Template[] = [
-  { id: 'box',      name: 'Caja',         description: 'Caja ensamblable con 6 caras y finger joints', icon: 'Box',       params: boxParams,      generate: generateBox },
-  { id: 'drawer',   name: 'Cajón',        description: 'Cajón con tirador tipo U',                     icon: 'Archive',   params: drawerParams,   generate: generateDrawer },
-  { id: 'shelf',    name: 'Estante',      description: 'Estante con repisas internas',                 icon: 'Library',   params: shelfParams,    generate: generateShelf },
-  { id: 'display',  name: 'Exhibidor',    description: 'Exhibidor escalonado tipo mostrador',          icon: 'Columns',   params: displayParams,  generate: generateDisplay },
-  { id: 'keychain', name: 'Llavero',      description: 'Llavero con texto personalizado',              icon: 'Key',       params: keychainParams, generate: generateKeychain },
-  { id: 'plaque',   name: 'Placa',        description: 'Placa conmemorativa con nombre',               icon: 'Award',     params: plaqueParams,   generate: generatePlaque },
-  { id: 'sign',     name: 'Letrero',      description: 'Letrero decorativo con texto grande',          icon: 'Signpost',  params: signParams,     generate: generateSign },
+  { id: 'box',           name: 'Caja',          description: 'Caja ensamblable con 6 caras y finger joints', icon: 'Box',       params: boxParams,      generate: generateBox },
+  { id: 'drawer',        name: 'Cajón',         description: 'Cajón con tirador tipo U',                     icon: 'Archive',   params: drawerParams,   generate: generateDrawer },
+  { id: 'shelf',         name: 'Estante',       description: 'Estante con repisas internas',                 icon: 'Library',   params: shelfParams,    generate: generateShelf },
+  { id: 'display',       name: 'Exhibidor',     description: 'Exhibidor escalonado tipo mostrador',          icon: 'Columns',   params: displayParams,  generate: generateDisplay },
+  { id: 'keychain',      name: 'Llavero',       description: 'Llavero con texto personalizado',              icon: 'Key',       params: keychainParams, generate: generateKeychain },
+  { id: 'plaque',        name: 'Placa',         description: 'Placa conmemorativa con nombre',               icon: 'Award',     params: plaqueParams,   generate: generatePlaque },
+  { id: 'sign',          name: 'Letrero',       description: 'Letrero decorativo con texto grande',          icon: 'Signpost',  params: signParams,     generate: generateSign },
+  { id: 'frame',         name: 'Portaretrato',  description: 'Portaretrato con marco, respaldo y pie',       icon: 'Image',     params: frameParams,    generate: generateFrame },
 ]
 
 export const TEMPLATE_MAP: Record<string, Template> = Object.fromEntries(

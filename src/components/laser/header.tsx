@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ThemeToggle } from './theme-toggle'
 import { SettingsModal } from './settings-modal'
+import { TemplatePicker } from './template-picker'
 import { useLaserStore } from '@/store/laser-store'
 import { MATERIALS } from '@/types/laser'
 import { exportSvg, exportDxf, exportLightBurn, downloadFile } from '@/lib/laser/export'
@@ -132,6 +133,8 @@ export function Header() {
           <Save className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Guardar</span>
         </Button>
+
+        <TemplatePicker />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
