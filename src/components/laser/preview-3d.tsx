@@ -208,21 +208,21 @@ export function Preview3D() {
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-background to-muted/40">
       {/* Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b bg-background/80 backdrop-blur px-3">
-        <div className="flex items-center gap-1.5 text-xs">
-          <Box className="h-3.5 w-3.5 text-amber-500" />
-          <span className="font-medium">Vista 3D</span>
+      <div className="flex h-10 items-center justify-between border-b bg-background/80 backdrop-blur px-2 sm:px-3">
+        <div className="flex items-center gap-1.5 text-xs min-w-0 overflow-hidden">
+          <Box className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+          <span className="font-medium flex-shrink-0">Vista 3D</span>
           {dimensions && (
-            <span className="text-muted-foreground">
-              · {dimensions.width}×{dimensions.height}×{dimensions.depth}mm · {material.label}
+            <span className="text-muted-foreground truncate text-[10px] sm:text-xs">
+              · {dimensions.width}×{dimensions.height}×{dimensions.depth}mm
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1 text-xs"
+            className="h-7 gap-1 text-xs px-2"
             onClick={toggleExploded}
             title="Vista despiezada"
           >
@@ -232,7 +232,7 @@ export function Preview3D() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1 text-xs"
+            className="h-7 gap-1 text-xs px-2"
             onClick={toggleAutoRotate}
             title="Auto-rotación"
           >
@@ -273,7 +273,7 @@ export function Preview3D() {
       </div>
 
       {/* Footer con info del material */}
-      <div className="border-t bg-background/80 px-3 py-1.5 text-[10px] text-muted-foreground">
+      <div className="border-t bg-background/80 px-2 sm:px-3 py-1.5 text-[10px] text-muted-foreground truncate">
         Material: <strong className="text-foreground">{material.label}</strong> · grosor {material.thickness}mm
       </div>
     </div>

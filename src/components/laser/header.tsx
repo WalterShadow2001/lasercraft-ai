@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Box, Download, Save, Sparkles } from 'lucide-react'
+import { Box, Download, Save, Sparkles, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -20,6 +20,7 @@ import { ThemeToggle } from './theme-toggle'
 import { SettingsModal } from './settings-modal'
 import { TemplatePicker } from './template-picker'
 import { useLaserStore } from '@/store/laser-store'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { MATERIALS } from '@/types/laser'
 import { exportSvg, exportDxf, exportLightBurn, downloadFile } from '@/lib/laser/export'
 import type { GenerationResult } from '@/types/laser'
@@ -27,6 +28,7 @@ import { toast } from 'sonner'
 
 export function Header() {
   const { svg, dimensions, partCount, settings, updateSettings, lastTemplateId, lastParams } = useLaserStore()
+  const isMobile = useIsMobile()
 
   const handleExport = (format: 'svg' | 'dxf' | 'lbrn2') => {
     if (!svg) {
@@ -87,26 +89,44 @@ export function Header() {
   }
 
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-background px-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-red-600">
-          <Box className="h-4 w-4 text-white" />
+    <header className={`flex items-center justify-between border-b bg-background ${isMobile ? 'h-12 px-2 gap-1' : 'h-14 px-4 gap-2'}`}>
+      {/* Logo + nombre */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div className={`flex items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-red-600 flex-shrink-0 ${isMobile ? 'h-6 w-6' : 'h-8 w-8'}`}>
+          <Box className={isMobile ? 'h-3 w-3 text-white' : 'h-4 w-4 text-white'} />
         </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold leading-none">LaserCraft AI</span>
-          <span className="text-[10px] text-muted-foreground leading-none mt-0.5">
-            Plantillas paramétricas para láser
+        <div className="flex flex-col min-w-0">
+          <span className={`font-semibold leading-none truncate ${isMobile ? 'text-xs' : 'text-sm'}`}>
+            LaserCraft AI
           </span>
+          {!isMobile && (
+            <span className="text-[10px] text-muted-foreground leading-none mt-0.5">
+              Plantillas paramétricas para láser
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        {/* Selector de material */}
+      {/* Dimensiones en desktop */}
+      {dimensions && !isMobile && (
+        <div className="hidden lg:flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-1 text-xs">
+          <Sparkles className="h-3 w-3 text-amber-500" />
+          <span className="font-mono">
+            {dimensions.width}×{dimensions.height}×{dimensions.depth}mm
+          </span>
+          <span className="text-muted-foreground">·</span>
+          <span>{partCount} partes</span>
+        </div>
+      )}
+
+      {/* Acciones */}
+      <div className="flex items-center gap-1 sm:gap-2 ml-auto">
+        {/* Selector de material - compacto en móvil */}
         <Select
           value={settings.material}
           onValueChange={(v) => updateSettings({ material: v as keyof typeof MATERIALS })}
         >
-          <SelectTrigger className="h-8 w-[140px] text-xs">
+          <SelectTrigger className={`text-xs flex-shrink-0 ${isMobile ? 'h-7 w-[100px] px-1' : 'h-8 w-[140px]'}`}>
             <SelectValue placeholder="Material" />
           </SelectTrigger>
           <SelectContent>
@@ -118,40 +138,55 @@ export function Header() {
           </SelectContent>
         </Select>
 
-        {dimensions && (
-          <div className="hidden md:flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-1 text-xs">
-            <Sparkles className="h-3 w-3 text-amber-500" />
-            <span className="font-mono">
-              {dimensions.width}×{dimensions.height}×{dimensions.depth}mm
-            </span>
-            <span className="text-muted-foreground">·</span>
-            <span>{partCount} partes</span>
-          </div>
-        )}
-
-        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={handleSave} disabled={!svg}>
-          <Save className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Guardar</span>
-        </Button>
-
-        <TemplatePicker />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="default" size="sm" className="h-8 gap-1.5" disabled={!svg}>
-              <Download className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Exportar</span>
+        {/* En móvil: agrupar botones pequeños en un menú */}
+        {isMobile ? (
+          <>
+            <TemplatePicker />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="default" size="icon" className="h-7 w-7" disabled={!svg}>
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleSave} disabled={!svg}>
+                  <Save className="h-3.5 w-3.5 mr-2" /> Guardar
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('svg')}>SVG</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('dxf')}>DXF</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('lbrn2')}>LightBurn</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <SettingsModal />
+            <ThemeToggle />
+          </>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={handleSave} disabled={!svg}>
+              <Save className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Guardar</span>
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => handleExport('svg')}>SVG (vectorial)</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleExport('dxf')}>DXF (AutoCAD)</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleExport('lbrn2')}>LightBurn (.lbrn2)</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
 
-        <SettingsModal />
-        <ThemeToggle />
+            <TemplatePicker />
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="default" size="sm" className="h-8 gap-1.5" disabled={!svg}>
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Exportar</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleExport('svg')}>SVG (vectorial)</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('dxf')}>DXF (AutoCAD)</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport('lbrn2')}>LightBurn (.lbrn2)</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <SettingsModal />
+            <ThemeToggle />
+          </>
+        )}
       </div>
     </header>
   )

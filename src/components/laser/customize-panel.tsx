@@ -21,7 +21,7 @@ import { TEMPLATES, getTemplate } from '@/lib/laser/templates'
 import { toast } from 'sonner'
 import type { TemplateParam } from '@/types/laser'
 
-export function CustomizePanel() {
+export function CustomizePanel({ forceOpen = false }: { forceOpen?: boolean }) {
   const { lastTemplateId, lastParams, showCustomize, settings } = useLaserStore()
   const [localParams, setLocalParams] = React.useState<Record<string, number | string>>({})
 
@@ -31,7 +31,26 @@ export function CustomizePanel() {
 
   const template = lastTemplateId ? getTemplate(lastTemplateId) : null
 
-  if (!showCustomize || !template) return null
+  // En móvil (forceOpen), siempre mostrar si hay template
+  if (forceOpen) {
+    if (!template) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+            <SlidersHorizontal className="h-8 w-8 text-muted-foreground" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Sin plantilla activa</p>
+            <p className="max-w-xs text-xs text-muted-foreground">
+              Genera una plantilla desde el botón "Plantillas" del header o pídesela al chat IA para poder personalizar parámetros.
+            </p>
+          </div>
+        </div>
+      )
+    }
+  } else {
+    if (!showCustomize || !template) return null
+  }
 
   const updateParam = (id: string, value: number | string) => {
     setLocalParams((p) => ({ ...p, [id]: value }))
@@ -83,8 +102,8 @@ export function CustomizePanel() {
         </Button>
       </div>
 
-      <ScrollArea className="max-h-[260px]">
-        <div className="space-y-3 p-3">
+      <ScrollArea className={forceOpen ? "flex-1" : "max-h-[260px]"}>
+        <div className={`space-y-3 ${forceOpen ? 'p-4' : 'p-3'}`}>
           {template.params.map((param) => (
             <ParamControl
               key={param.id}

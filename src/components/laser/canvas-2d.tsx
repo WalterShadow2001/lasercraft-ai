@@ -87,30 +87,29 @@ export function Canvas2D() {
   return (
     <div className="flex h-full flex-col bg-muted/30">
       {/* Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b bg-background px-3">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Scissors className="h-3.5 w-3.5 text-red-500" />
-          <span className="font-medium">Cama láser</span>
+      <div className="flex h-10 items-center justify-between border-b bg-background px-2 sm:px-3 overflow-x-auto">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
+          <Scissors className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
           <select
             value={bed.id}
             onChange={(e) => {
               const idx = LASER_BEDS.findIndex((b) => b.id === e.target.value)
               if (idx >= 0) setBedIndex(idx)
             }}
-            className="h-6 rounded border bg-background px-1 text-[11px]"
+            className="h-6 rounded border bg-background px-1 text-[11px] max-w-[140px]"
           >
             {LASER_BEDS.map((b) => (
               <option key={b.id} value={b.id}>{b.label} ({b.w}×{b.h}mm)</option>
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           {svg && (
             <>
               <Button
                 variant={isSimulating ? 'default' : 'outline'}
                 size="sm"
-                className="h-7 gap-1 text-xs"
+                className="h-7 gap-1 text-xs px-2"
                 onClick={toggleSimulation}
                 title="Simular corte láser"
               >
@@ -132,7 +131,7 @@ export function Canvas2D() {
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomOut}>
             <ZoomOut className="h-3.5 w-3.5" />
           </Button>
-          <span className="text-[10px] text-muted-foreground w-10 text-center">
+          <span className="text-[10px] text-muted-foreground w-10 text-center hidden sm:inline">
             {(zoom * 100).toFixed(0)}%
           </span>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleZoomIn}>
@@ -144,38 +143,30 @@ export function Canvas2D() {
         </div>
       </div>
 
-      {/* Stats bar */}
+      {/* Stats bar — compacto en móvil */}
       {svg && (
-        <div className="flex h-8 items-center gap-3 border-b bg-muted/50 px-3 text-[11px]">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2 sm:gap-3 border-b bg-muted/50 px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] overflow-x-auto">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <Clock className="h-3 w-3 text-blue-500" />
-            <span className="text-muted-foreground">Tiempo est.:</span>
+            <span className="text-muted-foreground hidden sm:inline">Tiempo:</span>
             <strong className="font-mono">
               {cutInfo.estTime < 60
                 ? `${cutInfo.estTime.toFixed(1)}s`
                 : `${Math.floor(cutInfo.estTime / 60)}:${String(Math.floor(cutInfo.estTime % 60)).padStart(2, '0')}`}
             </strong>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <Scissors className="h-3 w-3 text-red-500" />
-            <span className="text-muted-foreground">Long. corte:</span>
             <strong className="font-mono">{cutInfo.totalLength}mm</strong>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <Ruler className="h-3 w-3 text-emerald-500" />
-            <span className="text-muted-foreground">Partes:</span>
             <strong className="font-mono">{partCount}</strong>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-muted-foreground">Cama:</span>
-            <Badge variant="outline" className="text-[10px]">
+          <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+            <Badge variant="outline" className="text-[9px] sm:text-[10px]">
               {bed.w}×{bed.h}mm
             </Badge>
-            {dimensions && (
-              <span className="text-[10px] text-muted-foreground">
-                Pieza: {dimensions.width}×{dimensions.height}×{dimensions.depth}mm
-              </span>
-            )}
           </div>
         </div>
       )}
@@ -284,19 +275,19 @@ export function Canvas2D() {
       </div>
 
       {/* Convención de colores */}
-      <div className="flex h-6 items-center justify-between border-t bg-background px-3 text-[10px] text-muted-foreground">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1">
+      <div className="flex h-6 items-center justify-between border-t bg-background px-2 sm:px-3 text-[9px] sm:text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
+          <span className="flex items-center gap-1 flex-shrink-0">
             <span className="inline-block h-2 w-2 rounded-full bg-red-500" /> corte
           </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-black" /> grabado relleno
+          <span className="flex items-center gap-1 flex-shrink-0 hidden sm:flex">
+            <span className="inline-block h-2 w-2 rounded-full bg-black" /> grabado
           </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" /> grabado línea
+          <span className="flex items-center gap-1 flex-shrink-0 hidden sm:flex">
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" /> línea
           </span>
         </div>
-        <span>Coordenadas en mm · escala 1:{(1 / zoom).toFixed(2)}</span>
+        <span className="flex-shrink-0 hidden sm:inline">1:{(1 / zoom).toFixed(2)}</span>
       </div>
     </div>
   )
