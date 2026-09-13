@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { useLaserStore } from '@/store/laser-store'
 import { CustomizePanel } from './customize-panel'
+import { getZaiConfigHeader } from './settings-modal'
 import type { ChatMessage, ChatApiResponse } from '@/types/laser'
 import { toast } from 'sonner'
 
@@ -63,9 +64,13 @@ export function ChatPanel() {
     setThinking(true)
 
     try {
+      const zaiHeader = getZaiConfigHeader()
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(zaiHeader ? { 'x-zai-config': zaiHeader } : {}),
+        },
         body: JSON.stringify({
           messages: [...messages, userMsg],
           material: settings.material,
@@ -120,9 +125,13 @@ export function ChatPanel() {
     })
 
     try {
+      const zaiHeader = getZaiConfigHeader()
       const res = await fetch('/api/research', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(zaiHeader ? { 'x-zai-config': zaiHeader } : {}),
+        },
         body: JSON.stringify({ query: lastUser.content }),
       })
       const data = await res.json()

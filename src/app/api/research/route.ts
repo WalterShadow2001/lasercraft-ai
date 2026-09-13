@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
     if (!query || query.trim().length === 0) {
       return NextResponse.json({ error: 'Query vacío' }, { status: 400 })
     }
-    const result = await researchTemplate(query.trim())
+    // Pasar req para que researchTemplate use config per-request
+    const result = await researchTemplate(query.trim(), req)
     return NextResponse.json(result)
   } catch (err) {
     console.error('[/api/research] error:', err)

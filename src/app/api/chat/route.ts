@@ -115,8 +115,8 @@ export async function POST(req: NextRequest) {
       })),
     ]
 
-    // Llamar al LLM
-    const zai = await getZai()
+    // Llamar al LLM (pasar req para resolver config per-request)
+    const zai = await getZai(req)
     const completion = await zai.chat.completions.create({
       messages: llmMessages,
       temperature: 0.4,
@@ -239,11 +239,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('[/api/chat] error:', err)
     const errMsg = err instanceof Error ? err.message : 'unknown_error'
-    const isConfigError = errMsg.includes('config') || errMsg.includes('.z-ai-config')
+    const isConfigError =
+      errMsg.includes('config') || errMsg.includes('.z-ai-config') || errMsg.includes('ZAI_')
     return NextResponse.json<ChatApiResponse>(
       {
         reply: isConfigError
-          ? '⚠️ El agente IA no está configurado en este entorno. Configura ZAI_BASE_URL y ZAI_API_KEY en Vercel, o crea .z-ai-config.'
+          ? '⚠️ El agente IA no está configurado. Ve a "Settings" (icono ⚙ en el header) y pega tu token de Z.ai. Lo guardaremos solo en tu navegador (localStorage).'
           : 'Ocurrió un error procesando tu mensaje. Intenta de nuevo.',
         action: 'ask',
         questions: ['¿Puedes reformular tu petición?'],

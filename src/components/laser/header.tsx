@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ThemeToggle } from './theme-toggle'
+import { SettingsModal } from './settings-modal'
 import { useLaserStore } from '@/store/laser-store'
 import { MATERIALS } from '@/types/laser'
 import { exportSvg, exportDxf, exportLightBurn, downloadFile } from '@/lib/laser/export'
@@ -146,6 +147,7 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        <SettingsModal />
         <ThemeToggle />
       </div>
     </header>

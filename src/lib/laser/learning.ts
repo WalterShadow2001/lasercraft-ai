@@ -117,8 +117,8 @@ export interface ResearchResult {
   }
 }
 
-export async function researchTemplate(query: string): Promise<ResearchResult> {
-  const zai = await getZai()
+export async function researchTemplate(query: string, req?: Request): Promise<ResearchResult> {
+  const zai = await getZai(req)
 
   // Búsqueda web usando la función function calling del SDK
   const searchQuery = ` Boxes.py laser cutting parametric template ${query} github finger joints`
