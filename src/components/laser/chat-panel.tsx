@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { useLaserStore } from '@/store/laser-store'
 import { CustomizePanel } from './customize-panel'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { getZaiConfigHeader } from './settings-modal'
 import type { ChatMessage, ChatApiResponse } from '@/types/laser'
 import { toast } from 'sonner'
@@ -32,6 +33,7 @@ interface LearnState {
 export function ChatPanel() {
   const { messages, isAiThinking, addMessage, setThinking, setSvg, setLastGeneration, setLoopHistory, settings, clearChat } =
     useLaserStore()
+  const isMobile = useIsMobile()
   const [input, setInput] = React.useState('')
   const [isResearching, setIsResearching] = React.useState(false)
   const [learn, setLearn] = React.useState<LearnState | null>(null)
@@ -255,7 +257,7 @@ export function ChatPanel() {
       )}
 
       {/* Input + botón investigar */}
-      <div className="border-t p-2">
+      <div className={`border-t ${isMobile ? 'p-2' : 'p-2'}`}>
         <div className="flex gap-1.5">
           <Textarea
             value={input}
@@ -263,34 +265,48 @@ export function ChatPanel() {
             onKeyDown={handleKeyDown}
             placeholder="Describe tu proyecto… (Enter para enviar)"
             disabled={isAiThinking}
-            className="min-h-[44px] resize-none text-sm"
-            rows={2}
+            className={`resize-none text-sm ${isMobile ? 'min-h-[48px] text-base' : 'min-h-[44px]'}`}
+            rows={isMobile ? 1 : 2}
           />
           <div className="flex flex-col gap-1">
             <Button
               onClick={() => send()}
               disabled={!input.trim() || isAiThinking}
               size="icon"
-              className="h-auto self-stretch"
+              className={`h-auto self-stretch ${isMobile ? 'min-h-[48px]' : ''}`}
             >
               <Send className="h-4 w-4" />
             </Button>
-            <Button
-              onClick={research}
-              disabled={isResearching || isAiThinking || messages.length === 0}
-              variant="outline"
-              size="icon"
-              className="h-auto self-stretch"
-              title="Investigar en la web"
-            >
-              <Search className="h-3.5 w-3.5" />
-            </Button>
+            {!isMobile && (
+              <Button
+                onClick={research}
+                disabled={isResearching || isAiThinking || messages.length === 0}
+                variant="outline"
+                size="icon"
+                className="h-auto self-stretch"
+                title="Investigar en la web"
+              >
+                <Search className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
+        {isMobile && (
+          <Button
+            onClick={research}
+            disabled={isResearching || isAiThinking || messages.length === 0}
+            variant="outline"
+            size="sm"
+            className="mt-1.5 w-full gap-1.5 text-xs"
+          >
+            <Search className="h-3 w-3" />
+            Investigar en la web
+          </Button>
+        )}
       </div>
 
-      {/* Customize panel */}
-      <CustomizePanel />
+      {/* Customize panel — solo en desktop, en móvil es un tab separado */}
+      {!isMobile && <CustomizePanel />}
     </div>
   )
 }
