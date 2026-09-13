@@ -38,3 +38,67 @@ model ChatSession {
 
   @@index([userId])
 }
+
+// ===== Sistema de aprendizaje de la IA =====
+
+model LearningEntry {
+  id           String   @id @default(cuid())
+  userMessage  String   // lo que pidió el usuario
+  templateId   String?  // plantilla usada (null si no encontró)
+  params       String?  // JSON de parámetros generados
+  success      Boolean  // ¿se generó SVG válido?
+  validSvg     Boolean  // ¿pasó la validación?
+  loopAttempts Int      // intentos del loop de auto-corrección
+  errors       String?  // JSON array de errores
+  replyText    String   // respuesta de la IA
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  @@index([success])
+  @@index([templateId])
+  @@index([createdAt])
+}
+
+model UserPreference {
+  id           String   @id @default(cuid())
+  userId       String?
+  key          String   // ej: "preferred_material", "preferred_thickness"
+  value        String
+  confidence   Float    @default(0.5) // 0-1, qué tan seguro está
+  hitCount     Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, key])
+  @@index([key])
+}
+
+model DynamicTemplate {
+  id           String   @id @default(cuid())
+  name         String
+  description  String
+  sourceUrl    String?  // de dónde se investigó (GitHub, blog)
+  sourceQuery  String   // query original del usuario
+  templateCode String   // JSON serializado: { params, generate fn name }
+  testedWith   String?  // params con los que se probó
+  verified     Boolean  @default(false)
+  userId       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([verified])
+  @@index([name])
+}
+
+model ResearchLog {
+  id           String   @id @default(cuid())
+  query        String   // lo que se buscó
+  sourcesFound Int      // cuántas fuentes encontró
+  sourcesUsed  String   // JSON array de URLs usadas
+  summary      String   // resumen de lo aprendido
+  templateCreated Boolean @default(false)
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  @@index([query])
+}

@@ -1,5 +1,4 @@
-// POST /api/chat — Agente IA conversacional
-// Recibe mensajes y devuelve: reply + (opcional) svg generado desde plantilla
+// POST /api/chat — Agente IA conversacional con sistema de aprendizaje
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getZai } from '@/lib/zai-wrapper'
@@ -7,17 +6,26 @@ import type { ChatMessage, ChatApiResponse, MaterialInfo } from '@/types/laser'
 import { MATERIALS } from '@/types/laser'
 import { generateFromTemplate, TEMPLATES } from '@/lib/laser/templates'
 import { validateSvg } from '@/lib/laser/validator'
+import {
+  logInteraction,
+  getRecentInteractions,
+  detectUserPreferences,
+  researchTemplate,
+  shouldResearch,
+} from '@/lib/laser/learning'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const SYSTEM_PROMPT = `Eres LaserCraft AI, un asistente experto en diseño de plantillas para corte láser.
 Tu trabajo es conversar con el usuario, entender qué quiere crear, e indicarle
-al sistema QUÉ plantilla usar y CON QUÉ parámetros.
+al sistema QUÉ plantilla usar y CON QUÉ parámetros. También aprendes de cada
+interacción y puedes investigar plantillas nuevas en la web.
 
 NO generas SVG tú mismo — el sistema tiene una biblioteca de plantillas
 paramétricas inspiradas en Boxes.py. Tu único trabajo es identificar la
-plantilla correcta y llenar sus parámetros.
+plantilla correcta y llenar sus parámetros, o pedir al sistema que investigue
+si no existe la plantilla.
 
 BIBLIOTECA DE PLANTILLAS:
 1. box — Caja ensamblable con 6 caras y finger joints
@@ -31,54 +39,33 @@ BIBLIOTECA DE PLANTILLAS:
 FORMATO DE RESPUESTA (JSON estricto, sin markdown, sin texto adicional):
 {
   "reply": "Respuesta conversacional breve en español (máx 2 frases)",
-  "action": "ask" | "template",
+  "action": "ask" | "template" | "research",
   "templateId": "box" | "drawer" | "shelf" | "display" | "keychain" | "plaque" | "sign" | null,
   "params": { "width": 100, "height": 80, ... } | null,
   "questions": ["pregunta?"] | null
 }
 
 REGLAS CRÍTICAS:
-- SESGO HACIA GENERAR: Si el usuario menciona dimensiones (ej: "100x80x60mm", "caja 50mm") o un tipo claro de objeto (caja, cajón, llavero, placa, letrero, estante, exhibidor), responde INMEDIATAMENTE action="template" con todos los parámetros. NO pidas más información.
+- SESGO HACIA GENERAR: Si el usuario menciona dimensiones (ej: "100x80x60mm", "caja 50mm") o un tipo claro de objeto, responde INMEDIATAMENTE action="template" con todos los parámetros. NO pidas más información.
 - Si NO especifica el grosor, USA 6 por defecto (parámetro "thickness": 6).
-- Si NO especifica algún parámetro opcional, usa el valor por defecto: lidType="closed", bottomEdge="finger".
-- Si pide "llavero" o "placa" o "letrero" sin texto, usa un texto de ejemplo apropiado.
-- Solo responde action="ask" si el usuario pide algo que NO encaja en ninguna plantilla (ej: "silla", "rueda").
+- Si pide algo que NO encaja en ninguna plantilla (ej: "silla", "rueda", "engrane", "lampara"), responde action="research" para que el sistema investigue en la web.
 - Los parámetros numéricos deben ser números (no strings).
-- Para "caja", incluye SIEMPRE: width, height, depth, thickness, lidType, bottomEdge.
-- Para "drawer" incluye: width, height, depth, thickness, handleWidth, handleHeight.
-- Para "shelf" incluye: width, height, depth, thickness, shelves.
-- Para "display" incluye: width, height, depth, thickness, steps.
-- Para "keychain" incluye: width, height, text, fontSize, holeR.
-- Para "plaque" incluye: width, height, text, subtext, fontSize.
-- Para "sign" incluye: width, height, text, fontSize, border.
 - Usa medidas realistas (mm). Rangos: width 30-500, height 20-300, depth 30-400, thickness 3-12.
-- Responde SIEMPRE en español, en tono profesional pero cercano.
-
-EJEMPLOS:
-Usuario: "caja 100x80x60mm con finger joints"
-Respuesta: {"reply":"Generando caja 100×80×60mm con finger joints rectangulares.","action":"template","templateId":"box","params":{"width":100,"height":80,"depth":60,"thickness":6,"lidType":"closed","bottomEdge":"finger"},"questions":null}
-
-Usuario: "llavero con texto LaserCraft"
-Respuesta: {"reply":"Creando llavero con tu texto personalizado.","action":"template","templateId":"keychain","params":{"width":50,"height":20,"text":"LaserCraft","fontSize":10,"holeR":3},"questions":null}
-
-Usuario: "estante 200x250x80 con 3 repisas"
-Respuesta: {"reply":"Generando estante con 3 repisas internas.","action":"template","templateId":"shelf","params":{"width":200,"height":250,"depth":80,"thickness":6,"shelves":3},"questions":null}`
+- Responde SIEMPRE en español, en tono profesional pero cercano.`
 
 interface LlmResponse {
   reply: string
-  action: 'ask' | 'template'
+  action: 'ask' | 'template' | 'research'
   templateId?: string | null
   params?: Record<string, number | string> | null
   questions?: string[] | null
 }
 
 function parseLlmResponse(text: string): LlmResponse {
-  // Extraer JSON del texto (puede venir con markdown fences)
   let cleaned = text.trim()
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/)
   if (fenceMatch) cleaned = fenceMatch[1].trim()
 
-  // Intentar extraer el objeto JSON
   const jsonStart = cleaned.indexOf('{')
   const jsonEnd = cleaned.lastIndexOf('}')
   if (jsonStart >= 0 && jsonEnd > jsonStart) {
@@ -86,7 +73,7 @@ function parseLlmResponse(text: string): LlmResponse {
     try {
       return JSON.parse(jsonStr)
     } catch {
-      // Continuar al fallback
+      // fallback
     }
   }
 
@@ -103,10 +90,25 @@ export async function POST(req: NextRequest) {
     const messages: ChatMessage[] = body.messages || []
     const materialType: keyof typeof MATERIALS = body.material || 'mdf6'
     const material: MaterialInfo = MATERIALS[materialType]
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
 
-    // Construir historial para el LLM
+    // Recuperar historial de aprendizaje para few-shot
+    const recentSuccesses = await getRecentInteractions(3)
+    const userPrefs = await detectUserPreferences()
+
+    // Inyectar preferencias detectadas en el system prompt
+    let dynamicPrompt = SYSTEM_PROMPT
+    if (Object.keys(userPrefs).length > 0) {
+      dynamicPrompt += `\n\nPREFERENCIAS DETECTADAS DEL USUARIO (úsalas como defaults si no especifica):\n${JSON.stringify(userPrefs, null, 2)}`
+    }
+    if (recentSuccesses.length > 0) {
+      dynamicPrompt += `\n\nEJEMPLOS DE GENERACIONES EXITOSAS RECIENTES:\n${recentSuccesses
+        .map((r) => `"${r.userMessage}" → templateId="${r.templateId}" params=${JSON.stringify(r.params)}`)
+        .join('\n')}`
+    }
+
     const llmMessages = [
-      { role: 'system' as const, content: SYSTEM_PROMPT },
+      { role: 'system' as const, content: dynamicPrompt },
       ...messages.map((m) => ({
         role: m.role as 'user' | 'assistant' | 'system',
         content: m.content,
@@ -124,10 +126,24 @@ export async function POST(req: NextRequest) {
     const rawReply = completion.choices[0]?.message?.content ?? ''
     const parsed = parseLlmResponse(rawReply)
 
-    // Si el LLM indicó una plantilla, generar el SVG
+    // ===== ACCIÓN: RESEARCH (investigar plantilla nueva) =====
+    if (parsed.action === 'research' && lastUserMessage) {
+      const researchResult = await researchTemplate(lastUserMessage.content)
+
+      return NextResponse.json<ChatApiResponse>({
+        reply:
+          `🔍 He investigado "${lastUserMessage.content}". ${researchResult.summary}\n\n` +
+          (researchResult.templateFound
+            ? `Propuesta de plantilla encontrada: "${researchResult.proposedTemplate?.name}". ${researchResult.proposedTemplate?.description}\nParámetros sugeridos: ${researchResult.proposedTemplate?.paramsHint}`
+            : 'No encontré una plantilla similar en mi investigación. Prueba con una variación más específica.'),
+        action: 'ask',
+        questions: ['¿Quieres que intente generar una variación con los parámetros sugeridos?'],
+      })
+    }
+
+    // ===== ACCIÓN: TEMPLATE (generar SVG) =====
     if (parsed.action === 'template' && parsed.templateId) {
       const templateId = parsed.templateId
-      // Verificar que existe la plantilla
       if (!TEMPLATES.find((t) => t.id === templateId)) {
         return NextResponse.json<ChatApiResponse>({
           reply: `No reconozco la plantilla "${templateId}". Plantillas disponibles: ${TEMPLATES.map((t) => t.id).join(', ')}.`,
@@ -136,7 +152,6 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      // Inyectar el grosor del material si no vino en params
       const params = { ...(parsed.params || {}) }
       if (!params.thickness) params.thickness = material.thickness
 
@@ -167,6 +182,18 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ===== LOGGING DE APRENDIZAJE =====
+      await logInteraction({
+        userMessage: lastUserMessage?.content || '',
+        templateId,
+        params,
+        success: !!result,
+        validSvg: finalValid,
+        loopAttempts: loopHistory.length,
+        errors: loopHistory.flatMap((l) => l.errors),
+        replyText: parsed.reply,
+      })
+
       if (!result) {
         return NextResponse.json<ChatApiResponse>({
           reply: parsed.reply + '\n\n⚠️ Hubo un error generando el SVG. Intenta con otros parámetros.',
@@ -188,7 +215,22 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Respuesta conversacional (sin generación)
+    // ===== ACCIÓN: ASK (respuesta conversacional) =====
+    // Si la petición es novedosa y no encaja en plantillas, sugerir investigación
+    if (
+      parsed.action === 'ask' &&
+      lastUserMessage &&
+      shouldResearch(lastUserMessage.content, TEMPLATES.map((t) => t.id))
+    ) {
+      return NextResponse.json<ChatApiResponse>({
+        reply:
+          parsed.reply +
+          '\n\n💡 ¿Quieres que investigue en la web (Boxes.py, GitHub, instructables) si existe una plantilla similar? Usa el botón "Investigar" abajo.',
+        action: 'ask',
+        questions: ['¿Investigo plantillas similares en la web?'],
+      })
+    }
+
     return NextResponse.json<ChatApiResponse>({
       reply: parsed.reply,
       action: 'ask',
@@ -201,12 +243,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json<ChatApiResponse>(
       {
         reply: isConfigError
-          ? '⚠️ El agente IA no está configurado en este entorno. Para activarlo, configura las variables ZAI_BASE_URL y ZAI_API_KEY en Vercel, o crea un archivo .z-ai-config con tus credenciales de Z.ai.'
-          : 'Ocurrió un error procesando tu mensaje. Intenta de nuevo en unos segundos.',
+          ? '⚠️ El agente IA no está configurado en este entorno. Configura ZAI_BASE_URL y ZAI_API_KEY en Vercel, o crea .z-ai-config.'
+          : 'Ocurrió un error procesando tu mensaje. Intenta de nuevo.',
         action: 'ask',
-        questions: isConfigError
-          ? ['¿Quieres ver las plantillas disponibles mientras tanto?']
-          : ['¿Puedes reformular tu petición?'],
+        questions: ['¿Puedes reformular tu petición?'],
       },
       { status: 500 },
     )
