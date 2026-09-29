@@ -111,19 +111,24 @@ interface DetectedTemplate {
 function detectTemplateByKeywords(message: string): DetectedTemplate | null {
   const msg = message.toLowerCase()
   // Extraer dimensiones: 100x80x60, 100×80×60, 100*80*60, 20cm, etc
-  const dimMatches = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
-  const twoDim = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
+  const dim3Matches = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
+  const dim2Matches = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
   // Detectar unidad (cm vs mm)
   const isCm = msg.includes('cm')
   const unit = isCm ? 10 : 1 // convertir cm a mm
   // Texto entre comillas
   const textMatch = msg.match(/[""']([^""']+)[""']/)
   const text = textMatch ? textMatch[1] : ''
+  // Detectar si pide bisagra / tapa removible / tapa abrible
+  const wantsHinge = msg.includes('bisagra') || msg.includes('abrible') || msg.includes('removible') || msg.includes('tapa que abre')
+  const wantsLid = msg.includes('tapa')
+  // Detectar material
+  const wantsAcrylic = msg.includes('acrilico') || msg.includes('acrílico') || msg.includes('acrylic')
 
   // Detectar plantilla
-  if (msg.includes('portaretrato') || msg.includes('marco para foto') || msg.includes('cuadro')) {
-    if (dimMatches) {
-      const [w, h] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit]
+  if (msg.includes('portaretrato') || msg.includes('marco para foto') || msg.includes('marco de foto') || msg.includes('cuadro')) {
+    if (dim2Matches) {
+      const [w, h] = [parseFloat(dim2Matches[1]) * unit, parseFloat(dim2Matches[2]) * unit]
       return {
         templateId: 'frame',
         params: { photoW: w, photoH: h, border: 25, thickness: 6, standAngle: '15', holeR: 3 },
@@ -132,8 +137,8 @@ function detectTemplateByKeywords(message: string): DetectedTemplate | null {
     }
   }
   if (msg.includes('cajón') || msg.includes('cajon') || msg.includes('drawer')) {
-    if (dimMatches) {
-      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+    if (dim3Matches) {
+      const [w, h, d] = [parseFloat(dim3Matches[1]) * unit, parseFloat(dim3Matches[2]) * unit, parseFloat(dim3Matches[3]) * unit]
       return {
         templateId: 'drawer',
         params: { width: w, height: h, depth: d, thickness: 6, handleWidth: 40, handleHeight: 15 },
@@ -141,11 +146,11 @@ function detectTemplateByKeywords(message: string): DetectedTemplate | null {
       }
     }
   }
-  if (msg.includes('estante') || msg.includes('shelf') || msg.includes('repisas')) {
+  if (msg.includes('estante') || msg.includes('shelf') || msg.includes('repisas') || msg.includes('biblioteca')) {
     const shelvesMatch = msg.match(/(\d+)\s*(?:repisas|estantes|niveles)/)
     const shelves = shelvesMatch ? parseInt(shelvesMatch[1]) : 3
-    if (dimMatches) {
-      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+    if (dim3Matches) {
+      const [w, h, d] = [parseFloat(dim3Matches[1]) * unit, parseFloat(dim3Matches[2]) * unit, parseFloat(dim3Matches[3]) * unit]
       return {
         templateId: 'shelf',
         params: { width: w, height: h, depth: d, thickness: 6, shelves },
@@ -153,11 +158,11 @@ function detectTemplateByKeywords(message: string): DetectedTemplate | null {
       }
     }
   }
-  if (msg.includes('exhibidor') || msg.includes('display') || msg.includes('escalon')) {
-    const stepsMatch = msg.match(/(\d+)\s*(?:escalones|niveles|escalones)/)
+  if (msg.includes('exhibidor') || msg.includes('display') || msg.includes('escalon') || msg.includes('mostrador')) {
+    const stepsMatch = msg.match(/(\d+)\s*(?:escalones|niveles)/)
     const steps = stepsMatch ? parseInt(stepsMatch[1]) : 3
-    if (dimMatches) {
-      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+    if (dim3Matches) {
+      const [w, h, d] = [parseFloat(dim3Matches[1]) * unit, parseFloat(dim3Matches[2]) * unit, parseFloat(dim3Matches[3]) * unit]
       return {
         templateId: 'display',
         params: { width: w, height: h, depth: d, thickness: 6, steps },
@@ -173,15 +178,15 @@ function detectTemplateByKeywords(message: string): DetectedTemplate | null {
       reply: `Creando llavero con texto "${t}".`,
     }
   }
-  if (msg.includes('placa') || msg.includes('trofeo') || msg.includes('plaque')) {
-    const t = text || 'Premio Excelencia'
+  if (msg.includes('placa') || msg.includes('trofeo') || msg.includes('plaque') || msg.includes('diploma')) {
+    const t = text || (msg.includes('texto') ? msg.split('texto')[1]?.trim().slice(0, 20) : 'Premio Excelencia')
     return {
       templateId: 'plaque',
       params: { width: 100, height: 60, text: t, subtext: '2025', fontSize: 18 },
       reply: `Creando placa conmemorativa "${t}".`,
     }
   }
-  if (msg.includes('letrero') || msg.includes('sign') || msg.includes('cartel')) {
+  if (msg.includes('letrero') || msg.includes('sign') || msg.includes('cartel') || msg.includes('rótulo')) {
     const t = text || (msg.includes('texto') ? msg.split('texto')[1]?.trim().slice(0, 20) : 'BIENVENIDO')
     return {
       templateId: 'sign',
@@ -189,20 +194,22 @@ function detectTemplateByKeywords(message: string): DetectedTemplate | null {
       reply: `Creando letrero "${t}".`,
     }
   }
-  if (msg.includes('caja') || msg.includes('box')) {
-    if (dimMatches) {
-      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+  if (msg.includes('caja') || msg.includes('box') || msg.includes('recipiente') || msg.includes('contenedor')) {
+    if (dim3Matches) {
+      const [w, h, d] = [parseFloat(dim3Matches[1]) * unit, parseFloat(dim3Matches[2]) * unit, parseFloat(dim3Matches[3]) * unit]
+      // Si pide bisagra o tapa removible, usar lidType removable
+      const lidType = wantsHinge ? 'removable' : (wantsLid ? 'closed' : 'closed')
       return {
         templateId: 'box',
-        params: { width: w, height: h, depth: d, thickness: 6, lidType: 'closed', bottomEdge: 'finger' },
-        reply: `Generando caja ${w}×${h}×${d}mm con finger joints.`,
+        params: { width: w, height: h, depth: d, thickness: 6, lidType, bottomEdge: 'finger' },
+        reply: `Generando caja ${w}×${h}×${d}mm${wantsHinge ? ' con tapa removible (estilo bisagra)' : ''} con finger joints.`,
       }
     }
-    // Caja simple sin dimensiones explícitas
+    // Caja sin dimensiones explícitas: usar defaults razonables
     return {
       templateId: 'box',
-      params: { width: 100, height: 80, depth: 60, thickness: 6, lidType: 'closed', bottomEdge: 'finger' },
-      reply: 'Generando caja 100×80×60mm (valores por defecto).',
+      params: { width: 100, height: 80, depth: 60, thickness: 6, lidType: wantsHinge ? 'removable' : 'closed', bottomEdge: 'finger' },
+      reply: `Generando caja 100×80×60mm${wantsHinge ? ' con tapa removible' : ''}. Tip: puedes especificar dimensiones como "caja 120x80x60mm".`,
     }
   }
   return null
@@ -243,12 +250,10 @@ export async function POST(req: NextRequest) {
     let parsed: LlmResponse
     try {
       const zai = await getZai(req)
-      const completion = await zai.chat.completions.create({
-        messages: llmMessages,
-        temperature: 0.4,
-        max_tokens: 800,
-      })
-      const rawReply = completion.choices[0]?.message?.content ?? ''
+      const rawReply = await zai.chatCompletion(
+        llmMessages.map((m) => ({ role: m.role, content: m.content })),
+        { temperature: 0.4, max_tokens: 800 },
+      )
       parsed = parseLlmResponse(rawReply)
     } catch (err) {
       console.error('[/api/chat] LLM error, usando fallback:', err)

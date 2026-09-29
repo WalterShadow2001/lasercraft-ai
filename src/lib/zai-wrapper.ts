@@ -1,22 +1,37 @@
-// Wrapper para z-ai-web-dev-sdk que soporta:
-// 1. Variables de entorno (ZAI_BASE_URL, ZAI_API_KEY)
+// Wrapper para Z.ai — fetch directo (no usa SDK) para máximo control
+// Soporta:
+// 1. Variables de entorno (ZAI_BASE_URL, ZAI_API_KEY, ZAI_TOKEN)
 // 2. Config per-request (header x-zai-config del cliente)
 // 3. Archivo .z-ai-config local (sandbox/dev)
 
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import ZAIClass from 'z-ai-web-dev-sdk'
 
 export interface ZaiConfig {
   baseUrl: string
   apiKey: string
-  chatId?: string
-  userId?: string
   token?: string
+  userId?: string
+  chatId?: string
 }
 
-const cache = new Map<string, ZAIClass>()
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatCompletionResponse {
+  choices: Array<{
+    finish_reason: string
+    index: number
+    message: { content: string; role: string }
+  }>
+  created: number
+  id: string
+  model: string
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+}
 
 async function loadConfigFromEnv(): Promise<ZaiConfig | null> {
   const baseUrl = process.env.ZAI_BASE_URL
@@ -25,9 +40,9 @@ async function loadConfigFromEnv(): Promise<ZaiConfig | null> {
   return {
     baseUrl,
     apiKey,
-    chatId: process.env.ZAI_CHAT_ID,
-    userId: process.env.ZAI_USER_ID,
     token: process.env.ZAI_TOKEN,
+    userId: process.env.ZAI_USER_ID,
+    chatId: process.env.ZAI_CHAT_ID,
   }
 }
 
@@ -50,7 +65,6 @@ async function loadConfigFromFile(): Promise<ZaiConfig | null> {
 }
 
 function loadConfigFromHeaders(req: Request): ZaiConfig | null {
-  // Header x-zai-config: JSON codificado en base64
   const headerVal = req.headers.get('x-zai-config')
   if (!headerVal) return null
   try {
@@ -64,29 +78,68 @@ function loadConfigFromHeaders(req: Request): ZaiConfig | null {
 }
 
 async function resolveConfig(req?: Request): Promise<ZaiConfig> {
-  // 1. Config per-request (del cliente UI)
   if (req) {
     const fromHeaders = loadConfigFromHeaders(req)
     if (fromHeaders) return fromHeaders
   }
-  // 2. Variables de entorno (Vercel)
   const fromEnv = await loadConfigFromEnv()
   if (fromEnv) return fromEnv
-  // 3. Archivo .z-ai-config (sandbox/local dev)
   const fromFile = await loadConfigFromFile()
   if (fromFile) return fromFile
-  throw new Error('Z.ai SDK no configurado. Configure las variables ZAI_BASE_URL y ZAI_API_KEY, o pegue su token en Settings.')
+  throw new Error('Z.ai SDK no configurado. Configure ZAI_BASE_URL y ZAI_API_KEY, o pegue su token en Settings.')
 }
 
-export async function getZai(req?: Request): Promise<ZAIClass> {
+// ===== Cliente ZAI con fetch directo =====
+class ZAIClient {
+  constructor(private config: ZaiConfig) {}
+
+  async chatCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number } = {}): Promise<string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.config.apiKey}`,
+      'X-Z-AI-From': 'Z',
+    }
+    // X-Token requerido por internal-api.z.ai
+    if (this.config.token) {
+      headers['X-Token'] = this.config.token
+    }
+
+    const body: Record<string, unknown> = {
+      model: 'glm-4.6',
+      messages,
+      temperature: options.temperature ?? 0.4,
+      max_tokens: options.max_tokens ?? 800,
+    }
+    if (this.config.chatId) body.chat_id = this.config.chatId
+    if (this.config.userId) body.user_id = this.config.userId
+
+    const url = `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`ZAI API ${res.status}: ${text.slice(0, 200)}`)
+    }
+
+    const data = (await res.json()) as ChatCompletionResponse
+    return data.choices[0]?.message?.content ?? ''
+  }
+}
+
+let cachedClient: ZAIClient | null = null
+let cachedKey = ''
+
+export async function getZai(req?: Request): Promise<ZAIClient> {
   const config = await resolveConfig(req)
-  // Cache por baseUrl+apiKey para evitar recrear instancias
-  const cacheKey = `${config.baseUrl}:${config.apiKey}`
-  if (cache.has(cacheKey)) return cache.get(cacheKey)!
-  // El SDK acepta config en el constructor
-  const instance = new ZAIClass(config)
-  cache.set(cacheKey, instance)
-  return instance
+  const cacheKey = `${config.baseUrl}:${config.apiKey}:${config.token || ''}`
+  if (cachedClient && cachedKey === cacheKey) return cachedClient
+  cachedClient = new ZAIClient(config)
+  cachedKey = cacheKey
+  return cachedClient
 }
 
-export default ZAIClass
+export default ZAIClient

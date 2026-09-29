@@ -118,104 +118,53 @@ export interface ResearchResult {
 }
 
 export async function researchTemplate(query: string, req?: Request): Promise<ResearchResult> {
-  const zai = await getZai(req)
-
-  // Búsqueda web usando la función function calling del SDK
-  const searchQuery = ` Boxes.py laser cutting parametric template ${query} github finger joints`
-
   try {
-    // Usar la API de chat con function calling para web_search
-    const completion = await zai.chat.completions.create({
-      messages: [
+    const zai = await getZai(req)
+    const rawReply = await zai.chatCompletion(
+      [
         {
           role: 'system',
           content:
-            'Eres un investigador de plantillas paramétricas para corte láser. Tu objetivo es encontrar referencias y tutoriales sobre cómo construir la plantilla que el usuario solicita. Usa la función web_search para buscar en GitHub, blogs de fabricación digital y repositorios de plantillas. Devuelve un JSON con: sources (array de {url, title, snippet}), summary (resumen de lo que aprendiste), y proposedTemplate (objeto con name, description, paramsHint describiendo qué parámetros necesitaría la plantilla).',
+            'Eres un investigador de plantillas paramétricas para corte láser. Tu objetivo es encontrar referencias sobre cómo construir la plantilla que el usuario solicita. Devuelve un JSON con: sources (array de {url, title, snippet}), summary (resumen de lo que aprendiste), y proposedTemplate (objeto con name, description, paramsHint).',
         },
         {
           role: 'user',
-          content: `Investiga: "${query}". Busca en Boxes.py (github.com/florianfesti/boxes), instructables, hackaday, y otros recursos de fabricación digital. Devuelve SOLO JSON, sin markdown:\n{"sources":[...],"summary":"...","proposedTemplate":{"name":"...","description":"...","paramsHint":"..."}}`,
+          content: `Investiga: "${query}". Busca referencias en Boxes.py (github.com/florianfesti/boxes), instructables, hackaday. Devuelve SOLO JSON:\n{"sources":[{"url":"...","title":"...","snippet":"..."}],"summary":"...","proposedTemplate":{"name":"...","description":"...","paramsHint":"..."}}`,
         },
       ],
-      temperature: 0.3,
-      max_tokens: 1500,
-      // @ts-expect-error: function calling types
-      functions: [
-        {
-          name: 'web_search',
-          description: 'Buscar en la web información sobre plantillas de corte láser',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'Término de búsqueda' },
-            },
-            required: ['query'],
-          },
-        },
-      ],
-      function_call: { name: 'web_search' },
-    })
+      { temperature: 0.3, max_tokens: 1500 },
+    )
 
-    const choice = completion.choices[0]
     let summary = ''
     let sources: { url: string; title: string; snippet: string }[] = []
-
-    // Si hubo function_call, procesarlo
-    if (choice?.message?.function_call) {
-      const args = JSON.parse(choice.message.function_call.arguments || '{}')
-      // Hacer una segunda llamada para obtener el resultado
-      const followup = await zai.chat.completions.create({
-        messages: [
-          {
-            role: 'system',
-            content: 'Resume los hallazgos de la búsqueda en JSON con sources, summary y proposedTemplate.',
-          },
-          {
-            role: 'user',
-            content: `Búsqueda realizada: "${args.query || searchQuery}". Genera un JSON con sources (3 URLs relevantes: github, instructables, etc.), summary (lo que aprendiste sobre cómo construir esta plantilla) y proposedTemplate (name, description, paramsHint).`,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 1500,
-      })
-      const text = followup.choices[0]?.message?.content || ''
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0])
-          sources = parsed.sources || []
-          summary = parsed.summary || ''
-          const proposed = parsed.proposedTemplate
-          // Log de la investigación
-          await logResearch(query, sources, summary, !!proposed)
-          return {
-            query,
-            sources,
-            summary,
-            templateFound: !!proposed,
-            proposedTemplate: proposed,
-          }
-        } catch {
-          // JSON inválido, seguir
+    const jsonMatch = rawReply.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0])
+        sources = parsed.sources || []
+        summary = parsed.summary || ''
+        const proposed = parsed.proposedTemplate
+        await logResearch(query, sources, summary, !!proposed)
+        return {
+          query,
+          sources,
+          summary,
+          templateFound: !!proposed,
+          proposedTemplate: proposed,
         }
+      } catch {
+        // JSON inválido, seguir
       }
     }
-
-    // Fallback: extraer info del texto de respuesta
-    summary = choice?.message?.content || ''
+    summary = rawReply.slice(0, 500)
     await logResearch(query, sources, summary, false)
-    return {
-      query,
-      sources,
-      summary,
-      templateFound: false,
-    }
+    return { query, sources, summary, templateFound: false }
   } catch (err) {
     console.error('[learning] researchTemplate error:', err)
     return {
       query,
       sources: [],
-      summary: 'No se pudo completar la investigación en este momento.',
+      summary: 'No se pudo completar la investigación. El agente IA no está disponible.',
       templateFound: false,
     }
   }
