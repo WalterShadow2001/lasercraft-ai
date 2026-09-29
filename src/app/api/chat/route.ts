@@ -261,7 +261,7 @@ export async function POST(req: NextRequest) {
       const detected = lastUserMessage ? detectTemplateByKeywords(lastUserMessage.content) : null
       if (detected) {
         parsed = {
-          reply: detected.reply + ' (modo offline)',
+          reply: detected.reply,
           action: 'template',
           templateId: detected.templateId,
           params: detected.params,
