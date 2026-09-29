@@ -10,23 +10,23 @@ import { buildPlacements } from '@/lib/laser/assembly'
 import type { Placement, TemplatePart } from '@/types/laser'
 import { MATERIALS } from '@/types/laser'
 
+// Escala: 1 unidad three.js = 10mm (mejor para escena)
 const MM = 0.1
 
 // ===== Genera una textura SVG por pieza con su path real =====
-// Esto permite ver los finger joints REALES en el 3D, no solo cajas abstractas.
-
-function svgPartToTextureSvg(part: TemplatePart, material: typeof MATERIALS[keyof typeof MATERIALS]): string {
-  // Render del SVG de la pieza escalado a su bounding box
-  const w = part.width
-  const h = part.height
+function svgPartToTextureSvg(part: TemplatePart, material: typeof MATERIALS[keyof typeof MATERIALS], role: string): string {
+  const w = Math.max(part.width, 1)
+  const h = Math.max(part.height, 1)
+  // Fondo del color del material, paths en color de corte
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
-    <rect x="0" y="0" width="${w}" height="${h}" fill="${material.color}" stroke="${material.cutColor}" stroke-width="0.3" />
-    ${part.svg}
+    <rect x="0" y="0" width="${w}" height="${h}" fill="${material.color}" />
+    <g stroke="${material.cutColor}" stroke-width="0.5" fill="none">
+      ${part.svg}
+    </g>
   </svg>`
 }
 
 function svgToDataUrl(svg: string): string {
-  // unicode-safe base64
   const bytes = new TextEncoder().encode(svg)
   let binary = ''
   for (const b of bytes) binary += String.fromCharCode(b)
@@ -35,7 +35,11 @@ function svgToDataUrl(svg: string): string {
 
 // ===== Pieza con textura SVG real =====
 
-function Piece({ placement, partSvg, material }: { placement: Placement; partSvg?: string; material: typeof MATERIALS[keyof typeof MATERIALS] }) {
+function Piece({ placement, partSvg, material }: {
+  placement: Placement
+  partSvg?: string
+  material: typeof MATERIALS[keyof typeof MATERIALS]
+}) {
   const [hovered, setHovered] = React.useState(false)
   const w = Math.max(placement.width * MM, 0.1)
   const h = Math.max(placement.height * MM, 0.1)
@@ -51,16 +55,17 @@ function Piece({ placement, partSvg, material }: { placement: Placement; partSvg
   const textureUrl = React.useMemo(() => {
     if (!partSvg) return null
     try {
-      // Construir un SVG válido con los paths de la pieza
       const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${placement.width} ${placement.height}" width="${placement.width}" height="${placement.height}">
         <rect x="0" y="0" width="${placement.width}" height="${placement.height}" fill="${material.color}" opacity="0.9"/>
-        ${partSvg}
+        <g stroke="${material.cutColor}" stroke-width="0.6" fill="none">
+          ${partSvg}
+        </g>
       </svg>`
       return svgToDataUrl(svgStr)
     } catch {
       return null
     }
-  }, [partSvg, placement.width, placement.height, material.color])
+  }, [partSvg, placement.width, placement.height, material.color, material.cutColor])
 
   const texture = useTexture(textureUrl || '/logo.svg')
 
@@ -128,6 +133,22 @@ function AssemblyGroup({
         />
       ))}
     </group>
+  )
+}
+
+// ===== Auto-rotación que centra el modelo =====
+function AutoFitCamera({ dimensions }: { dimensions: { width: number; height: number; depth: number } }) {
+  // Ajustar distancia de la cámara según el tamaño del modelo
+  const maxDim = Math.max(dimensions.width, dimensions.height, dimensions.depth)
+  const distance = Math.max(12, maxDim * 0.15)
+  return (
+    <OrbitControls
+      enablePan={false}
+      autoRotate={false}
+      minDistance={5}
+      maxDistance={50}
+      target={[0, 0, 0]}
+    />
   )
 }
 
@@ -205,6 +226,11 @@ export function Preview3D() {
     )
   }
 
+  // Calcular distancia de cámara según dimensiones
+  const maxDim = dimensions ? Math.max(dimensions.width, dimensions.height, dimensions.depth) : 100
+  const camDistance = Math.max(12, maxDim * 0.18)
+  const camPos: [number, number, number] = [camDistance * 0.8, camDistance * 0.6, camDistance]
+
   return (
     <div className="flex h-full flex-col bg-gradient-to-b from-background to-muted/40">
       {/* Toolbar */}
@@ -247,14 +273,26 @@ export function Preview3D() {
 
       {/* Canvas 3D */}
       <div className="relative flex-1">
-        {placements.length > 0 ? (
-          <Canvas shadows camera={{ position: [12, 9, 15], fov: 45 }} dpr={[1, 2]}>
+        {placements.length > 0 && dimensions ? (
+          <Canvas shadows camera={{ position: camPos, fov: 45 }} dpr={[1, 2]}>
             <ambientLight intensity={0.7} />
             <directionalLight position={[10, 15, 10]} intensity={1.4} castShadow shadow-mapSize={[1024, 1024]} />
             <directionalLight position={[-8, -5, -8]} intensity={0.5} />
             <AssemblyGroup placements={placements} partsByRole={partsByRole} material={material} />
-            <OrbitControls enablePan={false} autoRotate={autoRotate} autoRotateSpeed={1.5} minDistance={5} maxDistance={40} />
-            <ContactShadows position={[0, -((dimensions?.height ?? 80) * MM) / 2 - 0.05, 0]} opacity={0.4} blur={2.5} far={8} />
+            <OrbitControls
+              enablePan={false}
+              autoRotate={autoRotate}
+              autoRotateSpeed={1.5}
+              minDistance={5}
+              maxDistance={50}
+              target={[0, 0, 0]}
+            />
+            <ContactShadows
+              position={[0, -((dimensions.height ?? 80) * MM) / 2 - 0.05, 0]}
+              opacity={0.4}
+              blur={2.5}
+              far={8}
+            />
             <Environment preset="studio" />
           </Canvas>
         ) : (

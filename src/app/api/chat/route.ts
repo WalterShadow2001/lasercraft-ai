@@ -18,40 +18,57 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const SYSTEM_PROMPT = `Eres LaserCraft AI, un asistente experto en diseño de plantillas para corte láser.
-Tu trabajo es conversar con el usuario, entender qué quiere crear, e indicarle
-al sistema QUÉ plantilla usar y CON QUÉ parámetros. También aprendes de cada
-interacción y puedes investigar plantillas nuevas en la web.
+Tu trabajo es identificar la plantilla correcta de la biblioteca y llenar sus parámetros.
 
-NO generas SVG tú mismo — el sistema tiene una biblioteca de plantillas
-paramétricas inspiradas en Boxes.py. Tu único trabajo es identificar la
-plantilla correcta y llenar sus parámetros, o pedir al sistema que investigue
-si no existe la plantilla.
-
-BIBLIOTECA DE PLANTILLAS:
+BIBLIOTECA DE PLANTILLAS (8 disponibles):
 1. box — Caja ensamblable con 6 caras y finger joints
 2. drawer — Cajón con tirador tipo U
 3. shelf — Estante con repisas
-4. display — Exhibidor escalonado
-5. keychain — Llavero con texto
-6. plaque — Placa con nombre
-7. sign — Letrero decorativo
+4. display — Exhibidor escalonado tipo mostrador
+5. keychain — Llavero con texto personalizado
+6. plaque — Placa conmemorativa con nombre
+7. sign — Letrero decorativo con texto grande
+8. frame — Portaretrato con marco, respaldo y pie
 
 FORMATO DE RESPUESTA (JSON estricto, sin markdown, sin texto adicional):
 {
   "reply": "Respuesta conversacional breve en español (máx 2 frases)",
   "action": "ask" | "template" | "research",
-  "templateId": "box" | "drawer" | "shelf" | "display" | "keychain" | "plaque" | "sign" | null,
+  "templateId": "box" | "drawer" | "shelf" | "display" | "keychain" | "plaque" | "sign" | "frame" | null,
   "params": { "width": 100, "height": 80, ... } | null,
   "questions": ["pregunta?"] | null
 }
 
 REGLAS CRÍTICAS:
-- SESGO HACIA GENERAR: Si el usuario menciona dimensiones (ej: "100x80x60mm", "caja 50mm") o un tipo claro de objeto, responde INMEDIATAMENTE action="template" con todos los parámetros. NO pidas más información.
+- SESGO HACIA GENERAR: Si el usuario menciona dimensiones (ej: "100x80x60mm", "caja 50mm") o un tipo claro de objeto (caja, cajón, llavero, placa, letrero, estante, exhibidor, portaretrato, marco), responde INMEDIATAMENTE action="template" con todos los parámetros. NO pidas más información.
 - Si NO especifica el grosor, USA 6 por defecto (parámetro "thickness": 6).
 - Si pide algo que NO encaja en ninguna plantilla (ej: "silla", "rueda", "engrane", "lampara"), responde action="research" para que el sistema investigue en la web.
 - Los parámetros numéricos deben ser números (no strings).
 - Usa medidas realistas (mm). Rangos: width 30-500, height 20-300, depth 30-400, thickness 3-12.
-- Responde SIEMPRE en español, en tono profesional pero cercano.`
+- Responde SIEMPRE en español, en tono profesional pero cercano.
+
+PARÁMETROS POR PLANTILLA:
+- box: width, height, depth, thickness, lidType ("closed"|"removable"|"flat"), bottomEdge ("finger"|"straight"|"holes"), engravingText (opcional)
+- drawer: width, height, depth, thickness, handleWidth, handleHeight
+- shelf: width, height, depth, thickness, shelves (número de repisas)
+- display: width, height, depth, thickness, steps (número de escalones)
+- keychain: width, height, text, fontSize, holeR
+- plaque: width, height, text, subtext, fontSize
+- sign: width, height, text, fontSize, border ("rect"|"rounded"|"oval")
+- frame: photoW, photoH, border, thickness, standAngle ("10"|"15"|"20"|"25"), holeR, text (opcional)
+
+EJEMPLOS:
+Usuario: "caja 100x80x60mm con finger joints"
+Respuesta: {"reply":"Generando caja 100×80×60mm con finger joints.","action":"template","templateId":"box","params":{"width":100,"height":80,"depth":60,"thickness":6,"lidType":"closed","bottomEdge":"finger"},"questions":null}
+
+Usuario: "portaretrato 20x15x5cm"
+Respuesta: {"reply":"Creando portaretrato para foto 200×150mm.","action":"template","templateId":"frame","params":{"photoW":200,"photoH":150,"border":25,"thickness":6,"standAngle":"15","holeR":3},"questions":null}
+
+Usuario: "llavero con texto LaserCraft"
+Respuesta: {"reply":"Creando llavero con tu texto.","action":"template","templateId":"keychain","params":{"width":50,"height":20,"text":"LaserCraft","fontSize":10,"holeR":3},"questions":null}
+
+Usuario: "estante 200x250x80 con 3 repisas"
+Respuesta: {"reply":"Generando estante con 3 repisas.","action":"template","templateId":"shelf","params":{"width":200,"height":250,"depth":80,"thickness":6,"shelves":3},"questions":null}`
 
 interface LlmResponse {
   reply: string
@@ -82,6 +99,113 @@ function parseLlmResponse(text: string): LlmResponse {
     action: 'ask',
     questions: null,
   }
+}
+
+// ===== Fallback por keywords: si el LLM no devuelve JSON, detectar plantilla manualmente =====
+interface DetectedTemplate {
+  templateId: string
+  params: Record<string, number | string>
+  reply: string
+}
+
+function detectTemplateByKeywords(message: string): DetectedTemplate | null {
+  const msg = message.toLowerCase()
+  // Extraer dimensiones: 100x80x60, 100×80×60, 100*80*60, 20cm, etc
+  const dimMatches = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
+  const twoDim = msg.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/)
+  // Detectar unidad (cm vs mm)
+  const isCm = msg.includes('cm')
+  const unit = isCm ? 10 : 1 // convertir cm a mm
+  // Texto entre comillas
+  const textMatch = msg.match(/[""']([^""']+)[""']/)
+  const text = textMatch ? textMatch[1] : ''
+
+  // Detectar plantilla
+  if (msg.includes('portaretrato') || msg.includes('marco para foto') || msg.includes('cuadro')) {
+    if (dimMatches) {
+      const [w, h] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit]
+      return {
+        templateId: 'frame',
+        params: { photoW: w, photoH: h, border: 25, thickness: 6, standAngle: '15', holeR: 3 },
+        reply: `Creando portaretrato para foto ${w}×${h}mm con marco de 25mm.`,
+      }
+    }
+  }
+  if (msg.includes('cajón') || msg.includes('cajon') || msg.includes('drawer')) {
+    if (dimMatches) {
+      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+      return {
+        templateId: 'drawer',
+        params: { width: w, height: h, depth: d, thickness: 6, handleWidth: 40, handleHeight: 15 },
+        reply: `Generando cajón ${w}×${h}×${d}mm con tirador.`,
+      }
+    }
+  }
+  if (msg.includes('estante') || msg.includes('shelf') || msg.includes('repisas')) {
+    const shelvesMatch = msg.match(/(\d+)\s*(?:repisas|estantes|niveles)/)
+    const shelves = shelvesMatch ? parseInt(shelvesMatch[1]) : 3
+    if (dimMatches) {
+      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+      return {
+        templateId: 'shelf',
+        params: { width: w, height: h, depth: d, thickness: 6, shelves },
+        reply: `Generando estante ${w}×${h}×${d}mm con ${shelves} repisas.`,
+      }
+    }
+  }
+  if (msg.includes('exhibidor') || msg.includes('display') || msg.includes('escalon')) {
+    const stepsMatch = msg.match(/(\d+)\s*(?:escalones|niveles|escalones)/)
+    const steps = stepsMatch ? parseInt(stepsMatch[1]) : 3
+    if (dimMatches) {
+      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+      return {
+        templateId: 'display',
+        params: { width: w, height: h, depth: d, thickness: 6, steps },
+        reply: `Generando exhibidor ${w}×${h}×${d}mm con ${steps} escalones.`,
+      }
+    }
+  }
+  if (msg.includes('llavero') || msg.includes('keychain')) {
+    const t = text || (msg.includes('texto') ? msg.split('texto')[1]?.trim().slice(0, 20) : 'LaserCraft')
+    return {
+      templateId: 'keychain',
+      params: { width: 50, height: 20, text: t, fontSize: 10, holeR: 3 },
+      reply: `Creando llavero con texto "${t}".`,
+    }
+  }
+  if (msg.includes('placa') || msg.includes('trofeo') || msg.includes('plaque')) {
+    const t = text || 'Premio Excelencia'
+    return {
+      templateId: 'plaque',
+      params: { width: 100, height: 60, text: t, subtext: '2025', fontSize: 18 },
+      reply: `Creando placa conmemorativa "${t}".`,
+    }
+  }
+  if (msg.includes('letrero') || msg.includes('sign') || msg.includes('cartel')) {
+    const t = text || (msg.includes('texto') ? msg.split('texto')[1]?.trim().slice(0, 20) : 'BIENVENIDO')
+    return {
+      templateId: 'sign',
+      params: { width: 200, height: 80, text: t, fontSize: 30, border: 'rect' },
+      reply: `Creando letrero "${t}".`,
+    }
+  }
+  if (msg.includes('caja') || msg.includes('box')) {
+    if (dimMatches) {
+      const [w, h, d] = [parseFloat(dimMatches[1]) * unit, parseFloat(dimMatches[2]) * unit, parseFloat(dimMatches[3]) * unit]
+      return {
+        templateId: 'box',
+        params: { width: w, height: h, depth: d, thickness: 6, lidType: 'closed', bottomEdge: 'finger' },
+        reply: `Generando caja ${w}×${h}×${d}mm con finger joints.`,
+      }
+    }
+    // Caja simple sin dimensiones explícitas
+    return {
+      templateId: 'box',
+      params: { width: 100, height: 80, depth: 60, thickness: 6, lidType: 'closed', bottomEdge: 'finger' },
+      reply: 'Generando caja 100×80×60mm (valores por defecto).',
+    }
+  }
+  return null
 }
 
 export async function POST(req: NextRequest) {
@@ -116,15 +240,50 @@ export async function POST(req: NextRequest) {
     ]
 
     // Llamar al LLM (pasar req para resolver config per-request)
-    const zai = await getZai(req)
-    const completion = await zai.chat.completions.create({
-      messages: llmMessages,
-      temperature: 0.4,
-      max_tokens: 800,
-    })
+    let parsed: LlmResponse
+    try {
+      const zai = await getZai(req)
+      const completion = await zai.chat.completions.create({
+        messages: llmMessages,
+        temperature: 0.4,
+        max_tokens: 800,
+      })
+      const rawReply = completion.choices[0]?.message?.content ?? ''
+      parsed = parseLlmResponse(rawReply)
+    } catch (err) {
+      console.error('[/api/chat] LLM error, usando fallback:', err)
+      // Fallback: detectar plantilla por keywords
+      const detected = lastUserMessage ? detectTemplateByKeywords(lastUserMessage.content) : null
+      if (detected) {
+        parsed = {
+          reply: detected.reply + ' (modo offline)',
+          action: 'template',
+          templateId: detected.templateId,
+          params: detected.params,
+          questions: null,
+        }
+      } else {
+        return NextResponse.json<ChatApiResponse>({
+          reply: '⚠️ El agente IA no está disponible. Configura tu token en Settings (icono ⚙) o usa el botón "Plantillas" del header para generar directamente.',
+          action: 'ask',
+          questions: ['¿Quieres usar el botón "Plantillas" del header?'],
+        })
+      }
+    }
 
-    const rawReply = completion.choices[0]?.message?.content ?? ''
-    const parsed = parseLlmResponse(rawReply)
+    // Fallback adicional: si el LLM respondió pero no con JSON válido, intentar detección por keywords
+    if (parsed.action === 'ask' && lastUserMessage) {
+      const detected = detectTemplateByKeywords(lastUserMessage.content)
+      if (detected) {
+        parsed = {
+          reply: detected.reply,
+          action: 'template',
+          templateId: detected.templateId,
+          params: detected.params,
+          questions: null,
+        }
+      }
+    }
 
     // ===== ACCIÓN: RESEARCH (investigar plantilla nueva) =====
     if (parsed.action === 'research' && lastUserMessage) {

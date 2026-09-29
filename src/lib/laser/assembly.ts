@@ -11,7 +11,6 @@ export interface AssemblyOptions {
 }
 
 // Convierte un TemplatePart en un Placement 3D
-// Asignación de roles → posición 3D (convención: Y up, Z hacia el observador)
 function roleToPlacement(
   part: TemplatePart,
   w: number, // ancho total del objeto (X)
@@ -105,8 +104,6 @@ function roleToPlacement(
         color: options.material.color,
       }
     case 'shelf': {
-      // Repisas distribuidas a lo largo del alto
-      // Se posiciona después en batch (la posición Y se ajusta en buildPlacements)
       return {
         id: part.id,
         label: part.label,
@@ -120,12 +117,13 @@ function roleToPlacement(
       }
     }
     case 'handle':
+      // Pie de soporte del portaretrato: posicionado detrás, rotado según ángulo
       return {
         id: part.id,
         label: part.label,
         role: 'handle',
-        position: [cx, cy + h / 2 + thickness + ex, cz + thickness / 2],
-        rotation: [Math.PI / 2, 0, 0],
+        position: [cx, cy - h / 2 - ex * 0.5, cz - thickness],
+        rotation: [Math.PI / 2 - 0.26, 0, 0], // ~15° hacia atrás
         width: part.width,
         height: part.height,
         depth: thickness,
@@ -183,8 +181,6 @@ export function buildPlacements(
 
 // Genera una textura SVG como data URL para aplicar a las piezas 3D
 export function svgToTextureDataUrl(svg: string, color: string): string {
-  // Simplificamos: devolvemos un color sólido como textura
-  // (Para textura real, serializaríamos el SVG de la pieza como fondo)
   const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="${color}"/></svg>`
   return `data:image/svg+xml;base64,${Buffer.from(svgStr).toString('base64')}`
 }

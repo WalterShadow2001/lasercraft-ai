@@ -1,5 +1,5 @@
-// Plantillas paramétricas — 7 modelos basados en Boxes.py
-// Sistema de edges: 'e' (recto), 'f' (finger positivo), 'F' (finger negativo), 'h' (holes)
+// Plantillas paramétricas — reescritas para generar SVG CORRECTO
+// Sistema: cada pieza es un rectángulo con finger joints opcionales en sus bordes
 
 import type { Template, TemplateParam, TemplatePart, GenerationResult, MaterialInfo, EdgeCode } from '@/types/laser'
 import { Turtle } from './turtle'
@@ -8,13 +8,12 @@ import { rectangularWall, fingerJointFromParams, edgeWidth } from './finger-join
 // ---- Helper: layout de partes en una lámina ----
 
 function layoutParts(parts: TemplatePart[], material: MaterialInfo): { svg: string; sheetW: number; sheetH: number; used: number } {
-  // Padding entre piezas
   const PAD = 5
   let x = PAD
   let y = PAD
   let rowMax = 0
   const placed: TemplatePart[] = []
-  const MAX_W = 600 // ancho de lámina virtual
+  const MAX_W = 600
 
   for (const p of parts) {
     if (x + p.width + PAD > MAX_W) {
@@ -32,12 +31,10 @@ function layoutParts(parts: TemplatePart[], material: MaterialInfo): { svg: stri
 
   const groups = placed
     .map((p) => {
-      const w = p.width
-      const h = p.height
-      const labelSvg = `<text x="${(p.x + w / 2).toFixed(2)}" y="${(p.y - 1).toFixed(2)}" font-size="6" font-family="Arial" fill="#6b7280" text-anchor="middle">${escapeXml(p.label)}</text>`
-      return `  <g data-role="${p.role}" data-label="${escapeXml(p.label)}" data-w="${w}" data-h="${h}" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})">
+      const labelSvg = `<text x="${(p.x + p.width / 2).toFixed(2)}" y="${(p.y - 1).toFixed(2)}" font-size="6" font-family="Arial" fill="#6b7280" text-anchor="middle">${escapeXml(p.label)}</text>`
+      return `  <g data-role="${p.role}" data-label="${escapeXml(p.label)}" data-w="${p.width.toFixed(2)}" data-h="${p.height.toFixed(2)}" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})">
 ${p.svg}
-    <rect x="0" y="0" width="${w.toFixed(2)}" height="${h.toFixed(2)}" fill="none" stroke="${material.cutColor}" stroke-width="0.1" stroke-dasharray="1 1" opacity="0.3"/>
+    <rect x="0" y="0" width="${p.width.toFixed(2)}" height="${p.height.toFixed(2)}" fill="none" stroke="${material.cutColor}" stroke-width="0.1" stroke-dasharray="1 1" opacity="0.3"/>
   </g>`
     })
     .join('\n')
@@ -47,7 +44,6 @@ ${p.svg}
 ${groups}
 </svg>`
 
-  // Calcular área usada
   const used = placed.reduce((acc, p) => acc + p.width * p.height, 0)
   return { svg, sheetW, sheetH, used }
 }
@@ -55,8 +51,6 @@ ${groups}
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
-
-// ---- Helper: convertir Turtle SVG a TemplatePart ----
 
 function partFromWall(
   id: string,
@@ -75,8 +69,6 @@ function partFromWall(
     height: wall.height,
   }
 }
-
-// ---- Helper: leer parámetros numéricos con defaults ----
 
 function num(params: Record<string, number | string>, key: string, fallback: number): number {
   const v = params[key]
@@ -127,7 +119,7 @@ function generateBox(params: Record<string, number | string>, material: Material
   )
 
   const bottomCode: EdgeCode = bottomEdge === 'straight' ? 'e' : bottomEdge === 'holes' ? 'h' : 'f'
-  const topCode: EdgeCode = lidType === 'closed' ? 'f' : 'F' // F = slot (tapa removible)
+  const topCode: EdgeCode = lidType === 'closed' ? 'f' : 'F'
   const lidCode: EdgeCode = lidType === 'closed' ? 'F' : 'f'
 
   // Front y back: bordes [bottom, right, top, left]
@@ -196,20 +188,14 @@ function generateDrawer(params: Record<string, number | string>, material: Mater
   const right = rectangularWall(d, h, ['e', 'F', 'f', 'F'], fj, 'right')
   const bottom = rectangularWall(w, d, ['F', 'F', 'F', 'F'], fj, 'bottom')
 
-  // Tirador tipo U
+  // Tirador tipo U (simple): rectángulo con un hueco rectangular central
   const handleT = new Turtle()
-  handleT.moveTo(0, 0)
-  handleT.polyline(hw / 2, 90, hh, -90, hw, -90, hh, 90)
-
+  handleT.rect(0, 0, hw, hh + t)
+  // Hueco del tirador (donde meter los dedos)
+  handleT.rectangularHole(t, t, hw - 2 * t, hh, 2)
   const handlePart: TemplatePart = {
-    id: 'handle',
-    label: 'Tirador',
-    role: 'handle',
-    svg: handleT.toSvg(),
-    x: 0,
-    y: 0,
-    width: hw,
-    height: hh + t,
+    id: 'handle', label: 'Tirador', role: 'handle',
+    svg: handleT.toSvg(), x: 0, y: 0, width: hw, height: hh + t,
   }
 
   const parts: TemplatePart[] = [
@@ -254,9 +240,12 @@ function generateShelf(params: Record<string, number | string>, material: Materi
 
   const fj = fingerJointFromParams(t, num(params, 'fjSpace', 2.0), num(params, 'fjFinger', 2.0), 2.0, 0)
 
-  const left  = rectangularWall(d, h, ['e', 'f', 'e', 'f'], fj, 'left')
-  const right = rectangularWall(d, h, ['e', 'F', 'e', 'F'], fj, 'right')
-  const back  = rectangularWall(w, h, ['e', 'e', 'e', 'e'], fj, 'back')
+  // Lados con repisas: bordes verticales con finger holes para insertar repisas
+  // Usamos 'f' en bottom y 'e' en top para un estante abierto por arriba
+  const left  = rectangularWall(d, h, ['f', 'e', 'f', 'e'], fj, 'left')
+  const right = rectangularWall(d, h, ['f', 'e', 'f', 'e'], fj, 'right')
+  // Back como pared completa para dar rigidez
+  const back  = rectangularWall(w, h, ['f', 'e', 'f', 'e'], fj, 'back')
 
   const parts: TemplatePart[] = [
     partFromWall('left',  'Lado Izq', 'left',  left),
@@ -264,9 +253,9 @@ function generateShelf(params: Record<string, number | string>, material: Materi
     partFromWall('back',  'Trasera',  'back',  back),
   ]
 
-  // Repisas
+  // Repisas: rectángulos con finger joints en lados izquierdo y derecho (encajan en los lados)
   for (let i = 0; i < shelves; i++) {
-    const shelf = rectangularWall(w, d, ['F', 'F', 'F', 'F'], fj, `shelf-${i}`)
+    const shelf = rectangularWall(w, d, ['e', 'f', 'e', 'f'], fj, `shelf-${i}`)
     parts.push(partFromWall(`shelf-${i}`, `Repisa ${i + 1}`, 'shelf', shelf))
   }
 
@@ -303,19 +292,11 @@ function generateDisplay(params: Record<string, number | string>, material: Mate
 
   const fj = fingerJointFromParams(t, num(params, 'fjSpace', 2.0), num(params, 'fjFinger', 2.0), 2.0, 0)
 
-  const stepH = h / steps
   const stepD = d / steps
 
-  const parts: TemplatePart[] = []
-
-  // Lados escalonados (en forma de escalera)
+  // Lados simples (rectángulos completos)
   const sideT = new Turtle()
-  sideT.moveTo(0, 0)
-  for (let i = 0; i < steps; i++) {
-    sideT.polyline(stepD, 90, stepH, -90)
-  }
-  sideT.polyline(d, 90, h, 90, d, 90, h, 90)
-
+  sideT.rect(0, 0, d, h)
   const leftSide: TemplatePart = {
     id: 'left', label: 'Lado Izq', role: 'left',
     svg: sideT.toSvg(), x: 0, y: 0, width: d, height: h,
@@ -324,13 +305,13 @@ function generateDisplay(params: Record<string, number | string>, material: Mate
     id: 'right', label: 'Lado Der', role: 'right',
     svg: sideT.toSvg(), x: 0, y: 0, width: d, height: h,
   }
-  parts.push(leftSide, rightSide)
+  const parts: TemplatePart[] = [leftSide, rightSide]
 
-  // Repisas escalonadas
+  // Repisas escalonadas: cada escalón es un rectángulo más profundo
   for (let i = 0; i < steps; i++) {
     const shelfW = w
     const shelfD = stepD * (steps - i)
-    const shelf = rectangularWall(shelfW, shelfD, ['F', 'F', 'e', 'F'], fj, `shelf-${i}`)
+    const shelf = rectangularWall(shelfW, shelfD, ['e', 'f', 'e', 'f'], fj, `shelf-${i}`)
     parts.push(partFromWall(`shelf-${i}`, `Escalón ${i + 1}`, 'shelf', shelf))
   }
 
@@ -372,6 +353,7 @@ function generateKeychain(params: Record<string, number | string>, material: Mat
   t.polyline(h - 2 * r, [90, r])
   t.polyline(w - 2 * r, [90, r])
   t.polyline(h - 2 * r, [90, r])
+  t.closePath()
   // Agujero para llavero
   t.circle(holeR + 2, h / 2, holeR)
   // Texto
@@ -416,11 +398,18 @@ function generatePlaque(params: Record<string, number | string>, material: Mater
   const fs = num(params, 'fontSize', 18)
 
   const t = new Turtle()
+  // Cuerpo redondeado
   t.moveTo(r, 0)
   t.polyline(w - 2 * r, [90, r])
   t.polyline(h - 2 * r, [90, r])
   t.polyline(w - 2 * r, [90, r])
   t.polyline(h - 2 * r, [90, r])
+  t.closePath()
+  // Agujeros de montaje en esquinas
+  t.circle(8, 8, 2)
+  t.circle(w - 8, 8, 2)
+  t.circle(8, h - 8, 2)
+  t.circle(w - 8, h - 8, 2)
   // Texto principal
   t.text(w / 2, h * 0.4, text, fs)
   // Subtítulo
@@ -428,7 +417,11 @@ function generatePlaque(params: Record<string, number | string>, material: Mater
   // Borde decorativo interior
   const inner = new Turtle()
   inner.moveTo(r + 3, 3)
-  inner.polyline(w - 2 * (r + 3), [90, r], h - 2 * (r + 3), [90, r], w - 2 * (r + 3), [90, r], h - 2 * (r + 3), [90, r])
+  inner.polyline(w - 2 * (r + 3), [90, r])
+  inner.polyline(h - 2 * (r + 3), [90, r])
+  inner.polyline(w - 2 * (r + 3), [90, r])
+  inner.polyline(h - 2 * (r + 3), [90, r])
+  inner.closePath()
 
   const plate: TemplatePart = {
     id: 'plate', label: 'Placa', role: 'plate',
@@ -470,10 +463,11 @@ function generateSign(params: Record<string, number | string>, material: Materia
   const t = new Turtle()
 
   if (border === 'oval') {
-    // Elipse
+    // Elipse: dos arcos
     const rx = w / 2
     const ry = h / 2
-    t.paths.push(`M 0 ${ry} A ${rx} ${ry} 0 1 1 ${w} ${ry} A ${rx} ${ry} 0 1 1 0 ${ry} Z`)
+    t.paths.push(`M 0 ${ry.toFixed(3)} A ${rx.toFixed(3)} ${ry.toFixed(3)} 0 1 1 ${w.toFixed(3)} ${ry.toFixed(3)} A ${rx.toFixed(3)} ${ry.toFixed(3)} 0 1 1 0 ${ry.toFixed(3)} Z`)
+    t.pathStarted = false
   } else if (border === 'rounded') {
     const r = Math.min(w, h) * 0.15
     t.moveTo(r, 0)
@@ -481,9 +475,9 @@ function generateSign(params: Record<string, number | string>, material: Materia
     t.polyline(h - 2 * r, [90, r])
     t.polyline(w - 2 * r, [90, r])
     t.polyline(h - 2 * r, [90, r])
+    t.closePath()
   } else {
-    t.moveTo(0, 0)
-    t.polyline(w, 90, h, 90, w, 90, h, 90)
+    t.rect(0, 0, w, h)
   }
 
   // Agujeros de montaje
@@ -508,7 +502,7 @@ function generateSign(params: Record<string, number | string>, material: Materia
 }
 
 // ============================================================
-// PLANTILLA 8: PORTRAIT_FRAME — portaretrato con soporte trasero
+// PLANTILLA 8: FRAME — portaretrato con soporte trasero
 // ============================================================
 
 const frameParams: TemplateParam[] = [
@@ -527,45 +521,35 @@ function generateFrame(params: Record<string, number | string>, material: Materi
   const photoH = num(params, 'photoH', 150)
   const b = num(params, 'border', 25)
   const t = num(params, 'thickness', material.thickness)
-  const standAngle = parseInt(str(params, 'standAngle', '15'))
   const holeR = num(params, 'holeR', 3)
   const text = str(params, 'text', '')
   const fs = num(params, 'fontSize', 14)
 
-  // Marco: dimensiones exteriores
   const outerW = photoW + 2 * b
   const outerH = photoH + 2 * b
 
-  // 1) FRENTE DEL MARCO (con ventana rectangular para la foto)
+  // 1) MARCO FRONTAL: rectángulo exterior con ventana rectangular interior
   const frameT = new Turtle()
-  // Perfil exterior
-  frameT.moveTo(0, 0)
-  frameT.polyline(outerW, 90, outerH, 90, outerW, 90, outerH, 90)
+  // Exterior (sentido horario)
+  frameT.rect(0, 0, outerW, outerH)
+  // Ventana interior (sentido antihorario para hacer hole con fill-rule)
+  frameT.rectangularHole(b, b, photoW, photoH, 0)
   // Agujero colgador centrado arriba
   frameT.circle(outerW / 2, outerH - b / 2, holeR)
-  // Ventana interior (rectangular) — hacer como path separado (push)
-  const inner = new Turtle()
-  inner.moveTo(b, b)
-  inner.polyline(photoW, 90, photoH, 90, photoW, 90, photoH, 90)
-  // Grabado opcional en el borde inferior del marco
-  let engrave = ''
+  // Grabado opcional en el borde inferior
   if (text) {
-    const et = new Turtle()
-    et.text(outerW / 2, b / 2 + fs / 3, text, fs)
-    engrave = '\n' + et.toSvg('fill="black" stroke="none"')
+    frameT.text(outerW / 2, b / 2 + fs / 3, text, fs)
   }
 
   const frontPart: TemplatePart = {
     id: 'frame-front', label: 'Marco frontal', role: 'front',
-    svg: frameT.toSvg() + '\n' + inner.toSvg('stroke="red" stroke-width="0.4" fill="none"') + engrave,
+    svg: frameT.toSvg(),
     x: 0, y: 0, width: outerW, height: outerH,
   }
 
-  // 2) RESPALDO (mismo tamaño exterior, sin ventana)
+  // 2) RESPALDO: rectángulo completo con 2 agujeros para bisagra
   const backT = new Turtle()
-  backT.moveTo(0, 0)
-  backT.polyline(outerW, 90, outerH, 90, outerW, 90, outerH, 90)
-  // Bisagra: 2 agujeros pequeños en el borde superior para alambre/clips
+  backT.rect(0, 0, outerW, outerH)
   backT.circle(outerW * 0.3, outerH - 3, 1.5)
   backT.circle(outerW * 0.7, outerH - 3, 1.5)
 
@@ -575,24 +559,28 @@ function generateFrame(params: Record<string, number | string>, material: Materi
     x: 0, y: 0, width: outerW, height: outerH,
   }
 
-  // 3) PIE DE SOPORTE (triangular con ángulo de inclinación)
-  // El pie se talla en el respaldo y se pliega. Lo generamos como pieza separada.
+  // 3) PIE DE SOPORTE: triángulo rectángulo simple + tab de inserción
+  const standAngle = parseInt(str(params, 'standAngle', '15'))
   const standH = Math.min(outerH * 0.6, 100)
   const standW = standH * Math.tan((standAngle * Math.PI) / 180)
   const standT = new Turtle()
-  standT.moveTo(0, 0)
-  // Triángulo con tab pequeño para encajar en el respaldo
-  standT.polyline(standW, 90, t, -90, 5, 90, t, -90, standW, 90)
-  // Cerrar el triángulo volviendo al origen
-  standT.polyline(standH, 90, standW * 2 + 5 + 2 * t, 90)
-  // Agujero para alambre colgador
-  standT.circle(standW / 2, standH * 0.3, holeR)
+  // Tab vertical de inserción (rectángulo pequeño a la izquierda)
+  standT.rect(0, 0, t, standH * 0.4)
+  // Triángulo del pie: 3 puntos formando triángulo rectángulo
+  // (t, 0) → (t + standW, 0) → (t + standW, standH) → cerrar a (t, 0)
+  standT.moveTo(t, 0)
+  standT.edge(standW)        // horizontal arriba
+  standT.corner(-90)         // girar para bajar
+  standT.edge(standH)        // vertical derecha
+  standT.corner(-90)
+  standT.edge(Math.sqrt(standW * standW + standH * standH)) // hipotenusa
+  standT.closePath()
 
   const standPart: TemplatePart = {
     id: 'stand', label: 'Pie de soporte', role: 'handle',
     svg: standT.toSvg(),
     x: 0, y: 0,
-    width: standW * 2 + 5 + 2 * t,
+    width: t + standW,
     height: standH,
   }
 

@@ -1,12 +1,12 @@
-// Turtle graphics path builder — puerto del sistema cairo de Boxes.py
-// Mantiene un cursor (x, y, angle) y acumula segmentos SVG.
-// Soporta arcos, holes (agujeros), finger joints.
+// Turtle graphics path builder — REESCRITO CORRECTAMENTE
+// Puerto del sistema cairo de Boxes.py
+// Cursor (x, y, angle) que acumula segmentos SVG como paths válidos.
 
 export class Turtle {
   x = 0
   y = 0
   angle = 0
-  burn = 0.1 // corrección de láser (no usada para SVG, pero preservamos el concepto)
+  burn = 0.1
 
   private paths: string[] = []
   private currentPath: string[] = []
@@ -19,9 +19,13 @@ export class Turtle {
   // ---- Helpers de posición ----
 
   moveTo(x: number, y: number): this {
+    // Cerrar el path actual si existe
+    this.pushCurrentPath()
     this.x = x
     this.y = y
-    this.pathStarted = false
+    // Iniciar nuevo path con M en la posición actual
+    this.currentPath.push(`M ${this.x.toFixed(3)} ${this.y.toFixed(3)}`)
+    this.pathStarted = true
     return this
   }
 
@@ -54,10 +58,13 @@ export class Turtle {
 
   edge(length: number): this {
     if (length === 0) return this
+    // PRIMERO aseguramos que el path está iniciado en la posición actual
+    this.ensurePathStarted()
+    // DESPUÉS movemos el cursor
     const rad = (this.angle * Math.PI) / 180
     this.x += length * Math.cos(rad)
     this.y += length * Math.sin(rad)
-    this.ensurePathStarted()
+    // Y agregamos el L a la nueva posición
     this.currentPath.push(`L ${this.x.toFixed(3)} ${this.y.toFixed(3)}`)
     return this
   }
@@ -69,6 +76,7 @@ export class Turtle {
       return this
     }
     // Arco SVG (A rx ry x-axis-rotation large-arc-flag sweep-flag x y)
+    this.ensurePathStarted()
     const rad = (this.angle * Math.PI) / 180
     // Centro del arco: perpendicular a la dirección actual
     const sign = degrees > 0 ? 1 : -1
@@ -81,7 +89,6 @@ export class Turtle {
     const ny = cy - sign * radius * Math.cos(newRad)
     const largeArc = Math.abs(degrees) > 180 ? 1 : 0
     const sweep = degrees > 0 ? 1 : 0
-    this.ensurePathStarted()
     this.currentPath.push(
       `A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 ${largeArc} ${sweep} ${nx.toFixed(3)} ${ny.toFixed(3)}`,
     )
@@ -111,12 +118,21 @@ export class Turtle {
     return this
   }
 
+  // Cierra el path actual con Z
+  closePath(): this {
+    if (this.currentPath.length > 0) {
+      this.currentPath.push('Z')
+      this.pushCurrentPath()
+    }
+    return this
+  }
+
   // ---- Figuras ----
 
   rectangularHole(x: number, y: number, dx: number, dy: number, r = 0): this {
     this.pushCurrentPath()
-    this.moveTo(x + r, y)
-    this.ensurePathStarted()
+    // Iniciar path en (x+r, y)
+    this.currentPath.push(`M ${(x + r).toFixed(3)} ${y.toFixed(3)}`)
     this.currentPath.push(`L ${(x + dx - r).toFixed(3)} ${y.toFixed(3)}`)
     if (r > 0) this.corner(90, r)
     this.currentPath.push(`L ${(x + dx).toFixed(3)} ${(y + dy - r).toFixed(3)}`)
@@ -125,8 +141,9 @@ export class Turtle {
     if (r > 0) this.corner(90, r)
     this.currentPath.push(`L ${x.toFixed(3)} ${(y + r).toFixed(3)}`)
     if (r > 0) this.corner(90, r)
+    this.currentPath.push('Z')
     this.pushCurrentPath()
-    // Restaurar posición sin afectar path
+    // Restaurar posición
     this.x = x
     this.y = y
     this.pathStarted = false
@@ -144,7 +161,22 @@ export class Turtle {
     return this
   }
 
-  // Texto como paths aproximados (para grabado) — usamos <text> SVG directamente
+  // Rectángulo completo (shortcut)
+  rect(x: number, y: number, w: number, h: number): this {
+    this.pushCurrentPath()
+    this.currentPath.push(`M ${x.toFixed(3)} ${y.toFixed(3)}`)
+    this.currentPath.push(`L ${(x + w).toFixed(3)} ${y.toFixed(3)}`)
+    this.currentPath.push(`L ${(x + w).toFixed(3)} ${(y + h).toFixed(3)}`)
+    this.currentPath.push(`L ${x.toFixed(3)} ${(y + h).toFixed(3)}`)
+    this.currentPath.push('Z')
+    this.pushCurrentPath()
+    this.x = x
+    this.y = y
+    this.pathStarted = false
+    return this
+  }
+
+  // Texto como <text> SVG (para grabado)
   text(x: number, y: number, content: string, size = 12, rotation = 0): this {
     this.pushCurrentPath()
     const transform = rotation !== 0 ? ` transform="rotate(${rotation} ${x} ${y})"` : ''
@@ -165,11 +197,11 @@ export class Turtle {
   }
 
   toSvg(stroke = 'stroke="red" stroke-width="0.4" fill="none"'): string {
-    return this.getPaths()
-      .filter((d) => !d.startsWith('<text'))
-      .map((d) => `<path d="${d}" ${stroke}/>`)
-      .concat(this.getPaths().filter((d) => d.startsWith('<text')))
-      .join('\n')
+    const all = this.getPaths()
+    const pathStrings = all.filter((d) => !d.startsWith('<text'))
+    const textStrings = all.filter((d) => d.startsWith('<text'))
+    const parts: string[] = pathStrings.map((d) => `<path d="${d}" ${stroke}/>`).concat(textStrings)
+    return parts.join('\n')
   }
 }
 

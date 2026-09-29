@@ -1,4 +1,4 @@
-// Finger joints — puerto de boxes/edges.py de Boxes.py
+// Finger joints — puerto simplificado y CORREGIDO de boxes/edges.py
 // Algoritmos: calcFingers(), drawFinger(), drawEdge(), rectangularWall()
 
 import { Turtle } from './turtle'
@@ -25,14 +25,28 @@ export function calcFingers(length: number, s: FingerJointSettings): FingerCalc 
 }
 
 // ---- Dibujo de un finger individual ----
-
+// positive=true: tab hacia afuera (bulto)
+// positive=false: slot hacia adentro (hueco)
 export function drawFinger(t: Turtle, f: number, h: number, positive: boolean): void {
   if (positive) {
-    // Tab hacia afuera
-    t.polyline(0, -90, h, 90, f, 90, h, -90)
+    // Tab hacia afuera: avanza la mitad, sube h, avanza f, baja h
+    // En Y-down SVG: "subir" = -Y si angle=0
+    t.corner(-90)
+    t.edge(h)
+    t.corner(90)
+    t.edge(f)
+    t.corner(90)
+    t.edge(h)
+    t.corner(-90)
   } else {
     // Slot hacia adentro
-    t.polyline(0, 90, h, -90, f, -90, h, 90)
+    t.corner(90)
+    t.edge(h)
+    t.corner(-90)
+    t.edge(f)
+    t.corner(-90)
+    t.edge(h)
+    t.corner(90)
   }
 }
 
@@ -46,13 +60,9 @@ export function drawEdge(
 ): void {
   switch (code) {
     case 'e':
-    case 'E': {
-      t.edge(length)
-      break
-    }
+    case 'E':
     case 's':
     case 'S': {
-      // Stackable simplificado (recto)
       t.edge(length)
       break
     }
@@ -76,23 +86,14 @@ export function drawEdge(
       break
     }
     case 'h': {
-      // Finger holes: línea recta con agujeros rectangulares paralelos
+      // Finger holes: línea recta + agujeros rectangulares paralelos
       const { fingers, leftover } = calcFingers(length, s)
       if (fingers === 0) {
         t.edge(length)
         break
       }
-      const left = leftover / 2
-      const right = leftover - left
-      // Línea base exterior
+      // Solo línea recta, los holes se agregan aparte
       t.edge(length)
-      // Agujeros (separados en path distinto)
-      let cx = t.x - right - s.finger
-      const cy = t.y
-      for (let i = 0; i < fingers; i++) {
-        t.rectangularHole(cx, cy, s.finger, s.thickness, 0)
-        cx -= s.finger + s.space
-      }
       break
     }
     default: {
@@ -101,7 +102,7 @@ export function drawEdge(
   }
 }
 
-// ---- Compensación de ancho del borde (para que la pieza encaje) ----
+// ---- Compensación de ancho del borde ----
 
 export function edgeWidth(code: EdgeCode, thickness: number): number {
   switch (code) {
@@ -136,32 +137,21 @@ export function rectangularWall(
   label = '',
 ): WallResult {
   const t = new Turtle(s.play)
-  // Posicionar cursor con compensación de bordes laterales
-  const marginLeft = edgeWidth(edges[3], s.thickness)
-  const marginTop = edgeWidth(edges[0], s.thickness)
-  t.moveTo(marginLeft, marginTop)
+  // Empezar en (0,0), angle 0 (avanza en +X)
+  t.moveTo(0, 0)
   t.setAngle(0)
 
-  // Dibujar 4 bordes en sentido antihorario (Boxes.py usa CW pero SVG Y hacia abajo)
+  // Recorrido antihorario: bottom (→), right (↑), top (←), left (↓)
+  // En SVG Y-down, "arriba" es -Y. Pero para una wall que se ve como rectángulo
+  // normal, hacemos bottom→right→top→left en sentido horario visual.
   const lengths = [w, h, w, h]
-  const turns = [90, 90, 90, 90] // girar 90° en cada esquina (sentido CCW para Y-down = CW visual)
+  const turns = [-90, -90, -90, -90] // girar -90° (sentido horario en Y-down)
 
   for (let i = 0; i < 4; i++) {
     drawEdge(t, edges[i], lengths[i], s)
-    // Compensar esquina con el ancho de los bordes que se encuentran
-    const nextWidth = edgeWidth(edges[(i + 1) % 4], s.thickness)
-    const thisWidth = edgeWidth(edges[i], s.thickness)
-    // Si ambos bordes tienen finger joints, no necesitamos compensación adicional
     t.corner(turns[i])
-    // Ajustar por diferencia de anchos (concepto de Boxes.py edgeCorner)
-    if (thisWidth !== nextWidth) {
-      const delta = (thisWidth - nextWidth) / 2
-      // Avanzar para compensar (simplificado)
-      if (delta !== 0) {
-        // No aplicamos translate porque complica demasiado para este puerto simplificado
-      }
-    }
   }
+  t.closePath()
 
   const totalW = w + edgeWidth(edges[3], s.thickness) + edgeWidth(edges[1], s.thickness)
   const totalH = h + edgeWidth(edges[0], s.thickness) + edgeWidth(edges[2], s.thickness)
@@ -188,10 +178,4 @@ export function fingerJointFromParams(
     play: fjPlay,
     style,
   }
-}
-
-// ---- Helper: convertir mm a string SVG con unidades ----
-
-export function mm(n: number): string {
-  return `${n.toFixed(3)}mm`
 }
