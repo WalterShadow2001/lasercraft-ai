@@ -131,17 +131,28 @@ export class Turtle {
 
   rectangularHole(x: number, y: number, dx: number, dy: number, r = 0): this {
     this.pushCurrentPath()
-    // Iniciar path en (x+r, y)
-    this.currentPath.push(`M ${(x + r).toFixed(3)} ${y.toFixed(3)}`)
-    this.currentPath.push(`L ${(x + dx - r).toFixed(3)} ${y.toFixed(3)}`)
-    if (r > 0) this.corner(90, r)
-    this.currentPath.push(`L ${(x + dx).toFixed(3)} ${(y + dy - r).toFixed(3)}`)
-    if (r > 0) this.corner(90, r)
-    this.currentPath.push(`L ${(x + r).toFixed(3)} ${(y + dy).toFixed(3)}`)
-    if (r > 0) this.corner(90, r)
-    this.currentPath.push(`L ${x.toFixed(3)} ${(y + r).toFixed(3)}`)
-    if (r > 0) this.corner(90, r)
-    this.currentPath.push('Z')
+    if (r <= 0) {
+      // Rectángulo simple sin esquinas redondeadas
+      this.paths.push(
+        `M ${x.toFixed(3)} ${y.toFixed(3)} ` +
+        `L ${(x + dx).toFixed(3)} ${y.toFixed(3)} ` +
+        `L ${(x + dx).toFixed(3)} ${(y + dy).toFixed(3)} ` +
+        `L ${x.toFixed(3)} ${(y + dy).toFixed(3)} Z`
+      )
+    } else {
+      // Rectángulo con esquinas redondeadas (arcos SVG explícitos)
+      this.paths.push(
+        `M ${(x + r).toFixed(3)} ${y.toFixed(3)} ` +
+        `L ${(x + dx - r).toFixed(3)} ${y.toFixed(3)} ` +
+        `A ${r.toFixed(3)} ${r.toFixed(3)} 0 0 1 ${(x + dx).toFixed(3)} ${(y + r).toFixed(3)} ` +
+        `L ${(x + dx).toFixed(3)} ${(y + dy - r).toFixed(3)} ` +
+        `A ${r.toFixed(3)} ${r.toFixed(3)} 0 0 1 ${(x + dx - r).toFixed(3)} ${(y + dy).toFixed(3)} ` +
+        `L ${(x + r).toFixed(3)} ${(y + dy).toFixed(3)} ` +
+        `A ${r.toFixed(3)} ${r.toFixed(3)} 0 0 1 ${x.toFixed(3)} ${(y + dy - r).toFixed(3)} ` +
+        `L ${x.toFixed(3)} ${(y + r).toFixed(3)} ` +
+        `A ${r.toFixed(3)} ${r.toFixed(3)} 0 0 1 ${(x + r).toFixed(3)} ${y.toFixed(3)} Z`
+      )
+    }
     this.pushCurrentPath()
     // Restaurar posición
     this.x = x

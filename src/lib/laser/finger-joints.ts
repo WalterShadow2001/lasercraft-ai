@@ -1,5 +1,5 @@
-// Finger joints — puerto simplificado y CORREGIDO de boxes/edges.py
-// Algoritmos: calcFingers(), drawFinger(), drawEdge(), rectangularWall()
+// Finger joints — versión con tabs saliendo hacia afuera del rectángulo
+// Puerto simplificado de boxes/edges.py
 
 import { Turtle } from './turtle'
 import type { EdgeCode, FingerJointSettings } from '@/types/laser'
@@ -24,82 +24,54 @@ export function calcFingers(length: number, s: FingerJointSettings): FingerCalc 
   return { fingers, leftover }
 }
 
-// ---- Dibujo de un finger individual ----
-// positive=true: tab hacia afuera (bulto)
-// positive=false: slot hacia adentro (hueco)
-export function drawFinger(t: Turtle, f: number, h: number, positive: boolean): void {
-  if (positive) {
-    // Tab hacia afuera: avanza la mitad, sube h, avanza f, baja h
-    // En Y-down SVG: "subir" = -Y si angle=0
-    t.corner(-90)
-    t.edge(h)
-    t.corner(90)
-    t.edge(f)
-    t.corner(90)
-    t.edge(h)
-    t.corner(-90)
-  } else {
-    // Slot hacia adentro
-    t.corner(90)
-    t.edge(h)
-    t.corner(-90)
-    t.edge(f)
-    t.corner(-90)
-    t.edge(h)
-    t.corner(90)
-  }
-}
-
-// ---- Dibujo de un borde completo con finger joints ----
-
-export function drawEdge(
+// ---- Dibujo de un borde con finger joints ----
+// El cursor va en +X (angle=0). El tab "positive" sale hacia -Y (afuera, arriba del rect).
+// El tab "negative" sale hacia +Y (adentro, dentro del rect).
+// Recorremos el rect en sentido HORARIO (en SVG Y-down):
+//   bottom: +X (derecha), tabs salen -Y (arriba, afuera si positive)
+//   right:  +Y (abajo),   tabs salen +X (derecha, afuera si positive)
+//   top:    -X (izq),     tabs salen +Y (abajo, afuera si positive)
+//   left:   -Y (arriba),  tabs salen -X (izq, afuera si positive)
+function drawEdgeWithFingers(
   t: Turtle,
   code: EdgeCode,
   length: number,
   s: FingerJointSettings,
+  outwardDirection: number, // ángulo hacia afuera del borde (90, 180, 270, 0)
 ): void {
-  switch (code) {
-    case 'e':
-    case 'E':
-    case 's':
-    case 'S': {
-      t.edge(length)
-      break
-    }
-    case 'f':
-    case 'F': {
-      const positive = code === 'f'
-      const { fingers, leftover } = calcFingers(length, s)
-      if (fingers === 0) {
-        t.edge(length)
-        break
-      }
-      // Distribuir leftover simétricamente
-      const left = leftover / 2
-      const right = leftover - left
-      t.edge(left)
-      for (let i = 0; i < fingers; i++) {
-        drawFinger(t, s.finger, s.thickness, positive)
-        if (i < fingers - 1) t.edge(s.space)
-      }
-      t.edge(right)
-      break
-    }
-    case 'h': {
-      // Finger holes: línea recta + agujeros rectangulares paralelos
-      const { fingers, leftover } = calcFingers(length, s)
-      if (fingers === 0) {
-        t.edge(length)
-        break
-      }
-      // Solo línea recta, los holes se agregan aparte
-      t.edge(length)
-      break
-    }
-    default: {
-      t.edge(length)
-    }
+  if (code === 'e' || code === 'E' || code === 's' || code === 'S' || code === 'h') {
+    t.edge(length)
+    return
   }
+  // 'f' = positive (tab hacia afuera)
+  // 'F' = negative (slot hacia adentro)
+  const positive = code === 'f'
+  const { fingers, leftover } = calcFingers(length, s)
+  if (fingers === 0) {
+    t.edge(length)
+    return
+  }
+  const left = leftover / 2
+  const right = leftover - left
+  const h = s.thickness
+  const f = s.finger
+
+  t.edge(left)
+  for (let i = 0; i < fingers; i++) {
+    // Dirección del tab: hacia afuera si positive, hacia adentro si negative
+    const tabDir = positive ? outwardDirection : (outwardDirection + 180) % 360
+    // Rotar al ángulo del tab, avanzar h, rotar de vuelta al ángulo del borde
+    const currentAngle = t.angle
+    t.setAngle(tabDir)
+    t.edge(h)
+    t.setAngle(currentAngle)
+    t.edge(f)
+    t.setAngle((tabDir + 180) % 360)
+    t.edge(h)
+    t.setAngle(currentAngle)
+    if (i < fingers - 1) t.edge(s.space)
+  }
+  t.edge(right)
 }
 
 // ---- Compensación de ancho del borde ----
@@ -122,6 +94,12 @@ export function edgeWidth(code: EdgeCode, thickness: number): number {
 
 // ---- rectangularWall: genera una pared rectangular con 4 bordes ----
 // edges = [bottom, right, top, left]
+// Recorre en sentido horario empezando en (0,0):
+//   bottom: → +X, outward = -Y (arriba, afuera)
+//   right:  ↓ +Y, outward = +X (derecha, afuera)
+//   top:    ← -X, outward = +Y (abajo, afuera)
+//   left:   ↑ -Y, outward = -X (izquierda, afuera)
+// En SVG Y-down, "arriba" = -Y, "abajo" = +Y, "izq" = -X, "der" = +X
 
 export interface WallResult {
   svg: string
@@ -137,24 +115,31 @@ export function rectangularWall(
   label = '',
 ): WallResult {
   const t = new Turtle(s.play)
-  // Empezar en (0,0), angle 0 (avanza en +X)
-  t.moveTo(0, 0)
+  // Offset para que los tabs que salen hacia afuera no se salgan del bounding box
+  const off = s.thickness
+  t.moveTo(off, off)
   t.setAngle(0)
 
-  // Recorrido antihorario: bottom (→), right (↑), top (←), left (↓)
-  // En SVG Y-down, "arriba" es -Y. Pero para una wall que se ve como rectángulo
-  // normal, hacemos bottom→right→top→left en sentido horario visual.
-  const lengths = [w, h, w, h]
-  const turns = [-90, -90, -90, -90] // girar -90° (sentido horario en Y-down)
+  // Para cada borde: length, turn después, dirección "hacia afuera"
+  // bottom: length=w, ángulo=0 (+X), afuera=270 (-Y, arriba en SVG)
+  // right:  length=h, ángulo=90 (+Y), afuera=0 (+X, derecha)
+  // top:    length=w, ángulo=180 (-X), afuera=90 (+Y, abajo)
+  // left:   length=h, ángulo=270 (-Y), afuera=180 (-X, izquierda)
+  const config = [
+    { len: w, angle: 0,   outward: 270 },
+    { len: h, angle: 90,  outward: 0   },
+    { len: w, angle: 180, outward: 90  },
+    { len: h, angle: 270, outward: 180 },
+  ]
 
   for (let i = 0; i < 4; i++) {
-    drawEdge(t, edges[i], lengths[i], s)
-    t.corner(turns[i])
+    t.setAngle(config[i].angle)
+    drawEdgeWithFingers(t, edges[i], config[i].len, s, config[i].outward)
   }
   t.closePath()
 
-  const totalW = w + edgeWidth(edges[3], s.thickness) + edgeWidth(edges[1], s.thickness)
-  const totalH = h + edgeWidth(edges[0], s.thickness) + edgeWidth(edges[2], s.thickness)
+  const totalW = w + 2 * edgeWidth(edges[3], s.thickness) + 2 * edgeWidth(edges[1], s.thickness)
+  const totalH = h + 2 * edgeWidth(edges[0], s.thickness) + 2 * edgeWidth(edges[2], s.thickness)
   const svg = t.toSvg()
 
   return { svg, width: totalW, height: totalH }

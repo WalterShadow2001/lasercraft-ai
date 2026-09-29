@@ -559,28 +559,30 @@ function generateFrame(params: Record<string, number | string>, material: Materi
     x: 0, y: 0, width: outerW, height: outerH,
   }
 
-  // 3) PIE DE SOPORTE: triángulo rectángulo simple + tab de inserción
+  // 3) PIE DE SOPORTE: triángulo simple con agujero para colgar
   const standAngle = parseInt(str(params, 'standAngle', '15'))
-  const standH = Math.min(outerH * 0.6, 100)
+  const standH = Math.min(outerH * 0.5, 80)
   const standW = standH * Math.tan((standAngle * Math.PI) / 180)
-  const standT = new Turtle()
-  // Tab vertical de inserción (rectángulo pequeño a la izquierda)
-  standT.rect(0, 0, t, standH * 0.4)
-  // Triángulo del pie: 3 puntos formando triángulo rectángulo
-  // (t, 0) → (t + standW, 0) → (t + standW, standH) → cerrar a (t, 0)
-  standT.moveTo(t, 0)
-  standT.edge(standW)        // horizontal arriba
-  standT.corner(-90)         // girar para bajar
-  standT.edge(standH)        // vertical derecha
-  standT.corner(-90)
-  standT.edge(Math.sqrt(standW * standW + standH * standH)) // hipotenusa
-  standT.closePath()
+  const tri = new Turtle()
+  // Triángulo rectángulo: (0,0) → (standW, 0) → (0, standH) → cerrar
+  tri.moveTo(0, 0)
+  tri.edge(standW)
+  tri.corner(90)
+  // Hipotenusa hasta (0, standH)
+  const hip = Math.sqrt(standW * standW + standH * standH)
+  // Calcular ángulo de la hipotenusa
+  const hipAngle = Math.atan2(standH, -standW) * 180 / Math.PI
+  tri.setAngle(hipAngle)
+  tri.edge(hip)
+  tri.closePath()
+  // Agujero para colgar
+  tri.circle(standW / 3, standH / 3, holeR)
 
   const standPart: TemplatePart = {
     id: 'stand', label: 'Pie de soporte', role: 'handle',
-    svg: standT.toSvg(),
+    svg: tri.toSvg(),
     x: 0, y: 0,
-    width: t + standW,
+    width: standW,
     height: standH,
   }
 
