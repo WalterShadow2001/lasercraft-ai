@@ -1,9 +1,10 @@
-// Estado global con Zustand
+// Estado global con Zustand — con persistencia en localStorage
 'use client'
 
 import { create } from 'zustand'
 import type { ChatMessage, ProjectSettings, MaterialType, LoopEntry, Placement } from '@/types/laser'
 import { MATERIALS } from '@/types/laser'
+import { loadChat, saveChat, clearChat as clearChatStorage, recordInteraction } from '@/lib/laser/persistence'
 
 interface LaserState {
   // Chat
@@ -39,6 +40,7 @@ interface LaserState {
   updateSettings: (s: Partial<ProjectSettings>) => void
   setMaterial: (m: MaterialType) => void
   clearChat: () => void
+  recordLearn: (templateId: string | null, success: boolean, dimensions?: { width: number; height: number; depth: number }) => void
 }
 
 const defaultSettings: ProjectSettings = {
@@ -49,15 +51,32 @@ const defaultSettings: ProjectSettings = {
   kerf: 0.1,
 }
 
-export const useLaserStore = create<LaserState>((set) => ({
-  messages: [
+// Cargar chat guardado al inicializar
+function getInitialMessages(): ChatMessage[] {
+  if (typeof window === 'undefined') {
+    return [
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: '¡Hola! Soy LaserCraft AI. Describe lo que quieres crear y generaré la plantilla lista para corte láser. Por ejemplo: "caja 100×80×60mm con finger joints" o "llavero con texto LaserCraft".',
+        createdAt: Date.now(),
+      },
+    ]
+  }
+  const saved = loadChat()
+  if (saved.length > 0) return saved
+  return [
     {
       id: 'welcome',
       role: 'assistant',
       content: '¡Hola! Soy LaserCraft AI. Describe lo que quieres crear y generaré la plantilla lista para corte láser. Por ejemplo: "caja 100×80×60mm con finger joints" o "llavero con texto LaserCraft".',
       createdAt: Date.now(),
     },
-  ],
+  ]
+}
+
+export const useLaserStore = create<LaserState>((set, get) => ({
+  messages: getInitialMessages(),
   isAiThinking: false,
   svg: null,
   dimensions: null,
@@ -72,7 +91,14 @@ export const useLaserStore = create<LaserState>((set) => ({
   placements: [],
   settings: defaultSettings,
 
-  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
+  addMessage: (msg) => {
+    set((s) => {
+      const newMessages = [...s.messages, msg]
+      // Persistir en localStorage
+      saveChat(newMessages)
+      return { messages: newMessages }
+    })
+  },
   setThinking: (v) => set({ isAiThinking: v }),
   setSvg: (svg, dimensions, partCount) =>
     set({ svg, dimensions: dimensions ?? null, partCount: partCount ?? 0 }),
@@ -89,7 +115,8 @@ export const useLaserStore = create<LaserState>((set) => ({
     set((state) => ({
       settings: { ...state.settings, material: m, thickness: MATERIALS[m].thickness },
     })),
-  clearChat: () =>
+  clearChat: () => {
+    clearChatStorage()
     set({
       messages: [
         {
@@ -106,5 +133,9 @@ export const useLaserStore = create<LaserState>((set) => ({
       lastTemplateId: null,
       lastParams: null,
       placements: [],
-    }),
+    })
+  },
+  recordLearn: (templateId, success, dimensions) => {
+    recordInteraction(templateId, success, dimensions)
+  },
 }))
