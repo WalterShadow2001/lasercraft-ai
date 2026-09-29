@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Send, Sparkles, AlertCircle, CheckCircle2, Loader2, Eraser, Search, Brain, TrendingUp } from 'lucide-react'
+import { Send, Sparkles, AlertCircle, CheckCircle2, Loader2, Eraser, Search, Brain, TrendingUp, GraduationCap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -10,12 +10,14 @@ import { useLaserStore } from '@/store/laser-store'
 import { CustomizePanel } from './customize-panel'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { getZaiConfigHeader } from './settings-modal'
+import { getSmartSuggestions, loadLearnStats, type LearnStats } from '@/lib/laser/persistence'
 import type { ChatMessage, ChatApiResponse } from '@/types/laser'
 import { toast } from 'sonner'
 
 const DEFAULT_SUGGESTIONS = [
   'Caja 100×80×60mm con finger joints',
-  'Cajón 120×50×100mm con tirador',
+  'Caja con bisagra 120×80×60mm',
+  'Portaretrato 20×15cm',
   'Llavero con texto "LaserCraft"',
   'Estante 200×250×80mm con 3 repisas',
   'Placa "Premio Excelencia 2025"',
@@ -31,20 +33,27 @@ interface LearnState {
 }
 
 export function ChatPanel() {
-  const { messages, isAiThinking, addMessage, setThinking, setSvg, setLastGeneration, setLoopHistory, settings, clearChat } =
+  const { messages, isAiThinking, addMessage, setThinking, setSvg, setLastGeneration, setLoopHistory, settings, clearChat, recordLearn } =
     useLaserStore()
   const isMobile = useIsMobile()
   const [input, setInput] = React.useState('')
   const [isResearching, setIsResearching] = React.useState(false)
   const [learn, setLearn] = React.useState<LearnState | null>(null)
+  const [stats, setStats] = React.useState<LearnStats | null>(null)
+  const [smartSuggestions, setSmartSuggestions] = React.useState<string[]>(DEFAULT_SUGGESTIONS)
   const scrollRef = React.useRef<HTMLDivElement>(null)
 
-  // Cargar estado de aprendizaje al montar
+  // Cargar estado de aprendizaje al montar y cuando cambian los mensajes
   React.useEffect(() => {
+    // Cargar stats locales (localStorage)
+    const localStats = loadLearnStats()
+    setStats(localStats)
+    setSmartSuggestions(getSmartSuggestions())
+    // Cargar stats de Turso (si está disponible)
     fetch('/api/learn')
       .then((r) => r.json())
       .then((data) => setLearn(data))
-      .catch(() => {/* sin BD local, no es crítico */})
+      .catch(() => {/* sin BD, no es crítico */})
   }, [messages.length])
 
   React.useEffect(() => {
@@ -97,7 +106,12 @@ export function ChatPanel() {
           setLastGeneration(data.templateId, data.params)
         }
         if (data.loopHistory) setLoopHistory(data.loopHistory)
+        // Registrar aprendizaje
+        recordLearn(data.templateId, true, data.dimensions || undefined)
         toast.success(`Plantilla generada: ${data.partCount} partes`)
+      } else {
+        // Registrar interacción sin generación
+        recordLearn(null, false)
       }
     } catch (err) {
       console.error('Chat error:', err)
@@ -174,9 +188,9 @@ export function ChatPanel() {
     }
   }
 
-  // Sugerencias dinámicas: usar las del sistema de aprendizaje si hay, si no, las default
-  const suggestions = learn?.smartSuggestions?.length ? learn.smartSuggestions : DEFAULT_SUGGESTIONS
-  const showSmart = learn && learn.learningEnabled && Object.keys(learn.detectedPreferences).length > 0
+  // Sugerencias: usar las inteligentes (basadas en historial) si hay, si no, las default
+  const suggestions = smartSuggestions.length > 0 ? smartSuggestions : DEFAULT_SUGGESTIONS
+  const showStats = stats && stats.totalInteractions > 0
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -185,9 +199,9 @@ export function ChatPanel() {
         <div className="flex items-center gap-1.5 text-xs">
           <Sparkles className="h-3.5 w-3.5 text-amber-500" />
           <span className="font-medium">Asistente IA</span>
-          {learn?.learningEnabled && (
-            <Badge variant="outline" className="ml-1 h-4 gap-0.5 text-[9px]">
-              <Brain className="h-2.5 w-2.5" /> aprendiendo
+          {showStats && (
+            <Badge variant="outline" className="ml-1 h-4 gap-0.5 text-[9px]" title={`${stats.totalInteractions} interacciones, ${stats.successfulGenerations} generadas`}>
+              <Brain className="h-2.5 w-2.5" /> {stats.totalInteractions} aprendidas
             </Badge>
           )}
         </div>
@@ -218,16 +232,22 @@ export function ChatPanel() {
         </div>
       </ScrollArea>
 
-      {/* Panel de preferencias detectadas */}
-      {showSmart && (
+      {/* Panel de estadísticas de aprendizaje */}
+      {showStats && (
         <div className="border-t bg-amber-50/50 dark:bg-amber-950/20 p-2">
-          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-400">
-            <TrendingUp className="h-3 w-3" />
-            Preferencias detectadas
+          <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-400 mb-1">
+            <GraduationCap className="h-3 w-3" />
+            Aprendizaje acumulado
           </div>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {Object.entries(learn!.detectedPreferences).slice(0, 5).map(([k, v]) => (
-              <span key={k} className="rounded border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 text-[10px]">
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            <span className="rounded border border-amber-200 dark:border-amber-800 px-1.5 py-0.5">
+              📊 <strong>{stats!.totalInteractions}</strong> interacciones
+            </span>
+            <span className="rounded border border-amber-200 dark:border-amber-800 px-1.5 py-0.5">
+              ✅ <strong>{stats!.successfulGenerations}</strong> generadas
+            </span>
+            {Object.entries(stats!.templatesUsed).slice(0, 2).map(([k, v]) => (
+              <span key={k} className="rounded border border-amber-200 dark:border-amber-800 px-1.5 py-0.5">
                 {k}: <strong>{v}</strong>
               </span>
             ))}
@@ -239,7 +259,7 @@ export function ChatPanel() {
       {messages.length <= 1 && (
         <div className="border-t p-2">
           <p className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            {learn?.smartSuggestions?.length ? 'Sugerencias inteligentes' : 'Sugerencias'}
+            {showStats ? 'Sugerencias inteligentes' : 'Sugerencias'}
           </p>
           <div className="flex flex-wrap gap-1">
             {suggestions.map((s) => (
