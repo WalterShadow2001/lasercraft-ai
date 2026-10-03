@@ -224,10 +224,11 @@ export async function POST(req: NextRequest) {
             questions: null,
           }
         } else {
+          // No mostrar error al usuario — sugerir usar Plantillas
           return NextResponse.json<ChatApiResponse>({
-            reply: '⚠️ El LLM falló. Verifica tu API key en Settings (icono ⚙). Mientras tanto, usa el botón "Plantillas" del header para generar directamente.',
+            reply: 'No reconocí qué plantilla quieres. Puedes:\n• Escribir "caja 100x80x60mm" o "portaretrato 20x15cm"\n• Usar el botón "Plantillas" del header para elegir una de 8 plantillas\n• Configurar Groq o Gemini gratis en Settings ⚙ para IA conversacional',
             action: 'ask',
-            questions: ['¿Quieres usar el botón "Plantillas" del header?'],
+            questions: ['¿Qué quieres crear?'],
           })
         }
       }

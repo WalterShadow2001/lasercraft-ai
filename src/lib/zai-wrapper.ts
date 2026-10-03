@@ -1,5 +1,5 @@
-// Wrapper multi-provider: soporta Groq (gratis, público) y Z.ai
-// Groq es la opción recomendada para producción (funciona desde Vercel)
+// Wrapper multi-provider: soporta Groq, Google Gemini, y Z.ai
+// Groq y Gemini son APIs públicas gratuitas que funcionan desde Vercel
 // Z.ai solo funciona en desarrollo local (sandbox)
 
 import fs from 'fs'
@@ -7,10 +7,10 @@ import path from 'path'
 import os from 'os'
 
 export interface LLMConfig {
-  provider: 'groq' | 'zai' | 'none'
+  provider: 'groq' | 'gemini' | 'zai' | 'none'
   apiKey: string
   baseUrl?: string
-  token?: string // X-Token para Z.ai
+  token?: string
   userId?: string
   chatId?: string
 }
@@ -23,11 +23,12 @@ export interface ChatMessage {
 // ===== Resolver config desde múltiples fuentes =====
 
 async function loadConfigFromEnv(): Promise<LLMConfig | null> {
-  // Groq por defecto si hay GROQ_API_KEY
   if (process.env.GROQ_API_KEY) {
     return { provider: 'groq', apiKey: process.env.GROQ_API_KEY }
   }
-  // Z.ai si hay ZAI_API_KEY
+  if (process.env.GEMINI_API_KEY) {
+    return { provider: 'gemini', apiKey: process.env.GEMINI_API_KEY }
+  }
   if (process.env.ZAI_API_KEY && process.env.ZAI_BASE_URL) {
     return {
       provider: 'zai',
@@ -75,9 +76,11 @@ function loadConfigFromHeaders(req: Request): LLMConfig | null {
     const decoded = Buffer.from(headerVal, 'base64').toString('utf-8')
     const config = JSON.parse(decoded)
     if (config.apiKey) {
-      // Detectar provider por baseUrl o explícito
       if (config.provider === 'groq' || (config.baseUrl && config.baseUrl.includes('groq'))) {
         return { provider: 'groq', apiKey: config.apiKey }
+      }
+      if (config.provider === 'gemini' || (config.baseUrl && config.baseUrl.includes('google'))) {
+        return { provider: 'gemini', apiKey: config.apiKey }
       }
       return {
         provider: 'zai',
@@ -103,7 +106,7 @@ async function resolveConfig(req?: Request): Promise<LLMConfig | null> {
   if (fromEnv) return fromEnv
   const fromFile = await loadConfigFromFile()
   if (fromFile) return fromFile
-  return null // No hay config — usar fallback por keywords
+  return null
 }
 
 // ===== Cliente LLM con fetch directo =====
@@ -113,6 +116,9 @@ class LLMClient {
   async chatCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number } = {}): Promise<string> {
     if (this.config.provider === 'groq') {
       return this.groqCompletion(messages, options)
+    }
+    if (this.config.provider === 'gemini') {
+      return this.geminiCompletion(messages, options)
     }
     return this.zaiCompletion(messages, options)
   }
@@ -137,6 +143,44 @@ class LLMClient {
     }
     const data = await res.json()
     return data.choices[0]?.message?.content ?? ''
+  }
+
+  private async geminiCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
+    // Google Gemini API (generativelanguage.googleapis.com)
+    // Modelo: gemini-1.5-flash (gratis, rápido)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.config.apiKey}`
+
+    // Convertir mensajes OpenAI format → Gemini format
+    const contents = messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      }))
+
+    // El system prompt se combina con el primer mensaje de usuario
+    const systemMsg = messages.find((m) => m.role === 'system')
+    if (systemMsg && contents.length > 0) {
+      contents[0].parts[0].text = systemMsg.content + '\n\n' + contents[0].parts[0].text
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          temperature: options.temperature ?? 0.4,
+          maxOutputTokens: options.max_tokens ?? 800,
+        },
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Gemini API ${res.status}: ${text.slice(0, 200)}`)
+    }
+    const data = await res.json()
+    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
   }
 
   private async zaiCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
@@ -174,7 +218,6 @@ class LLMClient {
   // ===== Visión: analizar imagen =====
   async visionCompletion(messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>): Promise<string> {
     if (this.config.provider === 'groq') {
-      // Groq soporta llama-3.2-90b-vision-preview
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -195,7 +238,53 @@ class LLMClient {
       const data = await res.json()
       return data.choices[0]?.message?.content ?? ''
     }
-    // Z.ai: usar createVision del SDK (solo en sandbox)
+    if (this.config.provider === 'gemini') {
+      // Gemini soporta visión nativamente con gemini-1.5-flash
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.config.apiKey}`
+
+      // Extraer system prompt e imagen
+      const systemMsg = messages.find((m) => m.role === 'system')
+      const userMsg = messages.find((m) => m.role === 'user')
+      let textContent = ''
+      let imageContent: string | null = null
+
+      if (userMsg) {
+        if (typeof userMsg.content === 'string') {
+          textContent = userMsg.content
+        } else if (Array.isArray(userMsg.content)) {
+          for (const part of userMsg.content) {
+            if (part.type === 'text' && part.text) textContent += part.text
+            if (part.type === 'image_url' && part.image_url) {
+              // Extraer base64 de data URL
+              const match = part.image_url.url.match(/^data:(.+?);base64,(.+)$/)
+              if (match) {
+                imageContent = match[2]
+              }
+            }
+          }
+        }
+      }
+
+      const parts: Array<Record<string, unknown>> = [{ text: (systemMsg?.content || '') + '\n\n' + textContent }]
+      if (imageContent) {
+        parts.push({ inline_data: { mime_type: 'image/jpeg', data: imageContent } })
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 800 },
+        }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Gemini Vision ${res.status}: ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    }
     throw new Error('Vision no soportado con Z.ai en producción')
   }
 }
@@ -213,7 +302,6 @@ export async function getLLM(req?: Request): Promise<LLMClient | null> {
   return cachedClient
 }
 
-// Alias para compatibilidad con código existente
 export async function getZai(req?: Request): Promise<LLMClient | null> {
   return getLLM(req)
 }
