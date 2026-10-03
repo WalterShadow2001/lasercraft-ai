@@ -1,17 +1,16 @@
-// Wrapper para Z.ai — fetch directo (no usa SDK) para máximo control
-// Soporta:
-// 1. Variables de entorno (ZAI_BASE_URL, ZAI_API_KEY, ZAI_TOKEN)
-// 2. Config per-request (header x-zai-config del cliente)
-// 3. Archivo .z-ai-config local (sandbox/dev)
+// Wrapper multi-provider: soporta Groq (gratis, público) y Z.ai
+// Groq es la opción recomendada para producción (funciona desde Vercel)
+// Z.ai solo funciona en desarrollo local (sandbox)
 
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-export interface ZaiConfig {
-  baseUrl: string
+export interface LLMConfig {
+  provider: 'groq' | 'zai' | 'none'
   apiKey: string
-  token?: string
+  baseUrl?: string
+  token?: string // X-Token para Z.ai
   userId?: string
   chatId?: string
 }
@@ -21,32 +20,28 @@ export interface ChatMessage {
   content: string
 }
 
-export interface ChatCompletionResponse {
-  choices: Array<{
-    finish_reason: string
-    index: number
-    message: { content: string; role: string }
-  }>
-  created: number
-  id: string
-  model: string
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-}
+// ===== Resolver config desde múltiples fuentes =====
 
-async function loadConfigFromEnv(): Promise<ZaiConfig | null> {
-  const baseUrl = process.env.ZAI_BASE_URL
-  const apiKey = process.env.ZAI_API_KEY
-  if (!baseUrl || !apiKey) return null
-  return {
-    baseUrl,
-    apiKey,
-    token: process.env.ZAI_TOKEN,
-    userId: process.env.ZAI_USER_ID,
-    chatId: process.env.ZAI_CHAT_ID,
+async function loadConfigFromEnv(): Promise<LLMConfig | null> {
+  // Groq por defecto si hay GROQ_API_KEY
+  if (process.env.GROQ_API_KEY) {
+    return { provider: 'groq', apiKey: process.env.GROQ_API_KEY }
   }
+  // Z.ai si hay ZAI_API_KEY
+  if (process.env.ZAI_API_KEY && process.env.ZAI_BASE_URL) {
+    return {
+      provider: 'zai',
+      apiKey: process.env.ZAI_API_KEY,
+      baseUrl: process.env.ZAI_BASE_URL,
+      token: process.env.ZAI_TOKEN,
+      userId: process.env.ZAI_USER_ID,
+      chatId: process.env.ZAI_CHAT_ID,
+    }
+  }
+  return null
 }
 
-async function loadConfigFromFile(): Promise<ZaiConfig | null> {
+async function loadConfigFromFile(): Promise<LLMConfig | null> {
   const paths = [
     path.join(process.cwd(), '.z-ai-config'),
     path.join(os.homedir(), '.z-ai-config'),
@@ -56,7 +51,16 @@ async function loadConfigFromFile(): Promise<ZaiConfig | null> {
     try {
       const configStr = await fs.promises.readFile(p, 'utf-8')
       const config = JSON.parse(configStr)
-      if (config.baseUrl && config.apiKey) return config
+      if (config.baseUrl && config.apiKey) {
+        return {
+          provider: 'zai',
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          token: config.token,
+          userId: config.userId,
+          chatId: config.chatId,
+        }
+      }
     } catch {
       // continue
     }
@@ -64,20 +68,33 @@ async function loadConfigFromFile(): Promise<ZaiConfig | null> {
   return null
 }
 
-function loadConfigFromHeaders(req: Request): ZaiConfig | null {
-  const headerVal = req.headers.get('x-zai-config')
+function loadConfigFromHeaders(req: Request): LLMConfig | null {
+  const headerVal = req.headers.get('x-llm-config') || req.headers.get('x-zai-config')
   if (!headerVal) return null
   try {
     const decoded = Buffer.from(headerVal, 'base64').toString('utf-8')
     const config = JSON.parse(decoded)
-    if (config.baseUrl && config.apiKey) return config
+    if (config.apiKey) {
+      // Detectar provider por baseUrl o explícito
+      if (config.provider === 'groq' || (config.baseUrl && config.baseUrl.includes('groq'))) {
+        return { provider: 'groq', apiKey: config.apiKey }
+      }
+      return {
+        provider: 'zai',
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        token: config.token,
+        userId: config.userId,
+        chatId: config.chatId,
+      }
+    }
     return null
   } catch {
     return null
   }
 }
 
-async function resolveConfig(req?: Request): Promise<ZaiConfig> {
+async function resolveConfig(req?: Request): Promise<LLMConfig | null> {
   if (req) {
     const fromHeaders = loadConfigFromHeaders(req)
     if (fromHeaders) return fromHeaders
@@ -86,24 +103,51 @@ async function resolveConfig(req?: Request): Promise<ZaiConfig> {
   if (fromEnv) return fromEnv
   const fromFile = await loadConfigFromFile()
   if (fromFile) return fromFile
-  throw new Error('Z.ai SDK no configurado. Configure ZAI_BASE_URL y ZAI_API_KEY, o pegue su token en Settings.')
+  return null // No hay config — usar fallback por keywords
 }
 
-// ===== Cliente ZAI con fetch directo =====
-class ZAIClient {
-  constructor(private config: ZaiConfig) {}
+// ===== Cliente LLM con fetch directo =====
+class LLMClient {
+  constructor(private config: LLMConfig) {}
 
   async chatCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number } = {}): Promise<string> {
+    if (this.config.provider === 'groq') {
+      return this.groqCompletion(messages, options)
+    }
+    return this.zaiCompletion(messages, options)
+  }
+
+  private async groqCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages,
+        temperature: options.temperature ?? 0.4,
+        max_tokens: options.max_tokens ?? 800,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Groq API ${res.status}: ${text.slice(0, 200)}`)
+    }
+    const data = await res.json()
+    return data.choices[0]?.message?.content ?? ''
+  }
+
+  private async zaiCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.config.apiKey}`,
       'X-Z-AI-From': 'Z',
     }
-    // X-Token requerido por internal-api.z.ai
     if (this.config.token) {
       headers['X-Token'] = this.config.token
     }
-
     const body: Record<string, unknown> = {
       model: 'glm-4.6',
       messages,
@@ -113,33 +157,65 @@ class ZAIClient {
     if (this.config.chatId) body.chat_id = this.config.chatId
     if (this.config.userId) body.user_id = this.config.userId
 
-    const url = `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`
+    const url = `${(this.config.baseUrl || '').replace(/\/$/, '')}/chat/completions`
     const res = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
     })
-
     if (!res.ok) {
       const text = await res.text()
       throw new Error(`ZAI API ${res.status}: ${text.slice(0, 200)}`)
     }
-
-    const data = (await res.json()) as ChatCompletionResponse
+    const data = await res.json()
     return data.choices[0]?.message?.content ?? ''
+  }
+
+  // ===== Visión: analizar imagen =====
+  async visionCompletion(messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>): Promise<string> {
+    if (this.config.provider === 'groq') {
+      // Groq soporta llama-3.2-90b-vision-preview
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'llama-3.2-90b-vision-preview',
+          messages,
+          temperature: 0.4,
+          max_tokens: 800,
+        }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Groq Vision ${res.status}: ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      return data.choices[0]?.message?.content ?? ''
+    }
+    // Z.ai: usar createVision del SDK (solo en sandbox)
+    throw new Error('Vision no soportado con Z.ai en producción')
   }
 }
 
-let cachedClient: ZAIClient | null = null
+let cachedClient: LLMClient | null = null
 let cachedKey = ''
 
-export async function getZai(req?: Request): Promise<ZAIClient> {
+export async function getLLM(req?: Request): Promise<LLMClient | null> {
   const config = await resolveConfig(req)
-  const cacheKey = `${config.baseUrl}:${config.apiKey}:${config.token || ''}`
+  if (!config) return null
+  const cacheKey = `${config.provider}:${config.apiKey}:${config.token || ''}`
   if (cachedClient && cachedKey === cacheKey) return cachedClient
-  cachedClient = new ZAIClient(config)
+  cachedClient = new LLMClient(config)
   cachedKey = cacheKey
   return cachedClient
 }
 
-export default ZAIClient
+// Alias para compatibilidad con código existente
+export async function getZai(req?: Request): Promise<LLMClient | null> {
+  return getLLM(req)
+}
+
+export default LLMClient

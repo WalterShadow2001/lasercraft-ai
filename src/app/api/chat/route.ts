@@ -113,41 +113,126 @@ export async function POST(req: NextRequest) {
     const material: MaterialInfo = MATERIALS[materialType]
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
 
-    // Recuperar historial de aprendizaje para few-shot
-    const recentSuccesses = await getRecentInteractions(3)
-    const userPrefs = await detectUserPreferences()
+    // ===== PASO 1: Intentar detección por keywords INSTANTÁNEA primero =====
+    // Esto hace que la app responda en <100ms sin esperar al LLM
+    if (lastUserMessage) {
+      const detected = detectTemplateByKeywords(lastUserMessage.content)
+      if (detected && detected.confidence >= 0.9) {
+        // Alta confianza: generar directamente sin llamar al LLM
+        const templateId = detected.templateId
+        if (TEMPLATES.find((t) => t.id === templateId)) {
+          const params = { ...detected.params }
+          if (!params.thickness) params.thickness = material.thickness
 
-    // Inyectar preferencias detectadas en el system prompt
-    let dynamicPrompt = SYSTEM_PROMPT
-    if (Object.keys(userPrefs).length > 0) {
-      dynamicPrompt += `\n\nPREFERENCIAS DETECTADAS DEL USUARIO (úsalas como defaults si no especifica):\n${JSON.stringify(userPrefs, null, 2)}`
+          // Loop de auto-corrección
+          const loopHistory: { attempt: number; valid: boolean; errors: string[] }[] = []
+          let result = null
+          let finalValid = false
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              result = generateFromTemplate(templateId, params, material)
+              const validation = validateSvg(result.svg)
+              loopHistory.push({
+                attempt,
+                valid: validation.valid,
+                errors: validation.issues.filter((i) => i.severity === 'error').map((i) => i.code),
+              })
+              if (validation.valid) {
+                finalValid = true
+                break
+              }
+            } catch (err) {
+              loopHistory.push({
+                attempt,
+                valid: false,
+                errors: [err instanceof Error ? err.message : 'generation_error'],
+              })
+            }
+          }
+
+          // Logging de aprendizaje
+          logInteraction({
+            userMessage: lastUserMessage.content,
+            templateId,
+            params,
+            success: !!result,
+            validSvg: finalValid,
+            loopAttempts: loopHistory.length,
+            errors: loopHistory.flatMap((l) => l.errors),
+            replyText: detected.reply,
+          }).catch(() => {})
+
+          if (result) {
+            return NextResponse.json<ChatApiResponse>({
+              reply: detected.reply + (finalValid ? '' : '\n\n⚠️ El SVG se generó pero con algunas advertencias.'),
+              action: 'template',
+              svg: result.svg,
+              templateId,
+              params,
+              dimensions: result.dimensions,
+              partCount: result.partCount,
+              loopHistory,
+              questions: null,
+            })
+          }
+        }
+      }
     }
-    if (recentSuccesses.length > 0) {
-      dynamicPrompt += `\n\nEJEMPLOS DE GENERACIONES EXITOSAS RECIENTES:\n${recentSuccesses
-        .map((r) => `"${r.userMessage}" → templateId="${r.templateId}" params=${JSON.stringify(r.params)}`)
-        .join('\n')}`
-    }
 
-    const llmMessages = [
-      { role: 'system' as const, content: dynamicPrompt },
-      ...messages.map((m) => ({
-        role: m.role as 'user' | 'assistant' | 'system',
-        content: m.content,
-      })),
-    ]
+    // ===== PASO 2: Si no se detectó con alta confianza, intentar con LLM =====
+    const llmClient = await getZai(req)
 
-    // Llamar al LLM (pasar req para resolver config per-request)
     let parsed: LlmResponse
-    try {
-      const zai = await getZai(req)
-      const rawReply = await zai.chatCompletion(
-        llmMessages.map((m) => ({ role: m.role, content: m.content })),
-        { temperature: 0.4, max_tokens: 800 },
-      )
-      parsed = parseLlmResponse(rawReply)
-    } catch (err) {
-      console.error('[/api/chat] LLM error, usando fallback:', err)
-      // Fallback: detectar plantilla por keywords
+    if (llmClient) {
+      // Hay LLM configurado (Groq o Z.ai) — usarlo
+      try {
+        // Recuperar historial de aprendizaje para few-shot
+        const recentSuccesses = await getRecentInteractions(3)
+        const userPrefs = await detectUserPreferences()
+        let dynamicPrompt = SYSTEM_PROMPT
+        if (Object.keys(userPrefs).length > 0) {
+          dynamicPrompt += `\n\nPREFERENCIAS DETECTADAS DEL USUARIO (úsalas como defaults si no especifica):\n${JSON.stringify(userPrefs, null, 2)}`
+        }
+        if (recentSuccesses.length > 0) {
+          dynamicPrompt += `\n\nEJEMPLOS DE GENERACIONES EXITOSAS RECIENTES:\n${recentSuccesses
+            .map((r) => `"${r.userMessage}" → templateId="${r.templateId}" params=${JSON.stringify(r.params)}`)
+            .join('\n')}`
+        }
+
+        const llmMessages = [
+          { role: 'system' as const, content: dynamicPrompt },
+          ...messages.map((m) => ({
+            role: m.role as 'user' | 'assistant' | 'system',
+            content: m.content,
+          })),
+        ]
+        const rawReply = await llmClient.chatCompletion(
+          llmMessages.map((m) => ({ role: m.role, content: m.content })),
+          { temperature: 0.4, max_tokens: 800 },
+        )
+        parsed = parseLlmResponse(rawReply)
+      } catch (err) {
+        console.error('[/api/chat] LLM error, usando fallback:', err)
+        // Fallback: detección por keywords con confidence menor
+        const detected = lastUserMessage ? detectTemplateByKeywords(lastUserMessage.content) : null
+        if (detected) {
+          parsed = {
+            reply: detected.reply,
+            action: 'template',
+            templateId: detected.templateId,
+            params: detected.params,
+            questions: null,
+          }
+        } else {
+          return NextResponse.json<ChatApiResponse>({
+            reply: '⚠️ El LLM falló. Verifica tu API key en Settings (icono ⚙). Mientras tanto, usa el botón "Plantillas" del header para generar directamente.',
+            action: 'ask',
+            questions: ['¿Quieres usar el botón "Plantillas" del header?'],
+          })
+        }
+      }
+    } else {
+      // No hay LLM configurado — usar detección por keywords
       const detected = lastUserMessage ? detectTemplateByKeywords(lastUserMessage.content) : null
       if (detected) {
         parsed = {
@@ -158,10 +243,11 @@ export async function POST(req: NextRequest) {
           questions: null,
         }
       } else {
+        // No se detectó nada — sugerir usar Plantillas o configurar LLM
         return NextResponse.json<ChatApiResponse>({
-          reply: '⚠️ El agente IA no está disponible. Configura tu token en Settings (icono ⚙) o usa el botón "Plantillas" del header para generar directamente.',
+          reply: 'No reconocí qué plantilla quieres. Puedes:\n• Escribir "caja 100x80x60mm" o "portaretrato 20x15cm"\n• Usar el botón "Plantillas" del header\n• Configurar un LLM (Groq gratis) en Settings ⚙ para respuestas conversacionales',
           action: 'ask',
-          questions: ['¿Quieres usar el botón "Plantillas" del header?'],
+          questions: ['¿Qué quieres crear?'],
         })
       }
     }

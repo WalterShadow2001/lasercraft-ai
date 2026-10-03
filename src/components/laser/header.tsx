@@ -19,6 +19,7 @@ import {
 import { ThemeToggle } from './theme-toggle'
 import { SettingsModal } from './settings-modal'
 import { TemplatePicker } from './template-picker'
+import { PhotoUpload } from './photo-upload'
 import { useLaserStore } from '@/store/laser-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { MATERIALS } from '@/types/laser'
@@ -142,6 +143,7 @@ export function Header() {
         {isMobile ? (
           <>
             <TemplatePicker />
+            <PhotoUpload />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="default" size="icon" className="h-7 w-7" disabled={!svg}>
@@ -168,6 +170,8 @@ export function Header() {
             </Button>
 
             <TemplatePicker />
+
+            <PhotoUpload />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
