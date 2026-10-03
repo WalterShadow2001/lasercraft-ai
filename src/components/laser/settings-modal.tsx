@@ -238,6 +238,10 @@ export function SettingsModal() {
 
 // Helper para usar en fetch con auth automática
 export function getZaiConfigHeader(): string | null {
+  return getLLMConfigHeader()
+}
+
+export function getLLMConfigHeader(): string | null {
   if (typeof window === 'undefined') return null
   const c = loadConfig()
   if (!c.apiKey) return null
