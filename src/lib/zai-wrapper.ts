@@ -134,31 +134,41 @@ class LLMClient {
 
   // ===== Pollinations.ai — gratis, sin API key =====
   private async pollinationsCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
-    // Pollinations usa OpenAI-compatible API con POST
-    const res = await fetch('https://text.pollinations.ai/openai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'openai',
-        messages,
-        temperature: options.temperature ?? 0.4,
-        max_tokens: options.max_tokens ?? 800,
-      }),
-    })
-    if (!res.ok) {
-      // Fallback a GET simple si POST falla
-      const systemMsg = messages.find((m) => m.role === 'system')?.content || ''
-      const userMsgs = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
-      const prompt = `${systemMsg}\n\nUsuario: ${userMsgs}`
-      const encoded = encodeURIComponent(prompt)
-      const getRes = await fetch(`https://text.pollinations.ai/${encoded}`, { method: 'GET' })
-      if (!getRes.ok) {
-        throw new Error(`Pollinations GET ${getRes.status}`)
+    // Método 1: POST (OpenAI-compatible)
+    try {
+      const res = await fetch('https://text.pollinations.ai/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'openai',
+          messages,
+          temperature: options.temperature ?? 0.4,
+          max_tokens: options.max_tokens ?? 800,
+        }),
+        signal: AbortSignal.timeout(15000), // 15s timeout
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const content = data.choices?.[0]?.message?.content
+        if (content) return content
       }
-      return await getRes.text()
+    } catch {
+      // Continuar al método 2
     }
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content ?? ''
+
+    // Método 2: GET (más simple, más confiable)
+    const systemMsg = messages.find((m) => m.role === 'system')?.content || ''
+    const userMsgs = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+    const prompt = `${systemMsg}\n\nUsuario: ${userMsgs}\n\nResponde SOLO en JSON:`
+    const encoded = encodeURIComponent(prompt)
+    const getRes = await fetch(`https://text.pollinations.ai/${encoded}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!getRes.ok) {
+      throw new Error(`Pollinations GET ${getRes.status}`)
+    }
+    return await getRes.text()
   }
 
   private async groqCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
