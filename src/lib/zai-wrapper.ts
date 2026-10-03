@@ -1,13 +1,15 @@
-// Wrapper multi-provider: soporta Groq, Google Gemini, y Z.ai
-// Groq y Gemini son APIs públicas gratuitas que funcionan desde Vercel
-// Z.ai solo funciona en desarrollo local (sandbox)
+// Wrapper multi-provider: soporta Pollinations.ai (gratis, sin API key),
+// Google Gemini, Groq, y Z.ai
+//
+// Pollinations.ai es la opción por DEFECTO — funciona sin configuración
+// y es una IA real (no solo keywords).
 
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
 export interface LLMConfig {
-  provider: 'groq' | 'gemini' | 'zai' | 'none'
+  provider: 'pollinations' | 'groq' | 'gemini' | 'zai' | 'none'
   apiKey: string
   baseUrl?: string
   token?: string
@@ -97,16 +99,20 @@ function loadConfigFromHeaders(req: Request): LLMConfig | null {
   }
 }
 
-async function resolveConfig(req?: Request): Promise<LLMConfig | null> {
+async function resolveConfig(req?: Request): Promise<LLMConfig> {
+  // 1. Header del cliente (config manual del usuario)
   if (req) {
     const fromHeaders = loadConfigFromHeaders(req)
     if (fromHeaders) return fromHeaders
   }
+  // 2. Variables de entorno (Vercel)
   const fromEnv = await loadConfigFromEnv()
   if (fromEnv) return fromEnv
+  // 3. Archivo .z-ai-config (sandbox/local dev)
   const fromFile = await loadConfigFromFile()
   if (fromFile) return fromFile
-  return null
+  // 4. DEFAULT: Pollinations.ai (gratis, sin API key)
+  return { provider: 'pollinations', apiKey: 'none' }
 }
 
 // ===== Cliente LLM con fetch directo =====
@@ -114,6 +120,9 @@ class LLMClient {
   constructor(private config: LLMConfig) {}
 
   async chatCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number } = {}): Promise<string> {
+    if (this.config.provider === 'pollinations') {
+      return this.pollinationsCompletion(messages, options)
+    }
     if (this.config.provider === 'groq') {
       return this.groqCompletion(messages, options)
     }
@@ -121,6 +130,35 @@ class LLMClient {
       return this.geminiCompletion(messages, options)
     }
     return this.zaiCompletion(messages, options)
+  }
+
+  // ===== Pollinations.ai — gratis, sin API key =====
+  private async pollinationsCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
+    // Pollinations usa OpenAI-compatible API con POST
+    const res = await fetch('https://text.pollinations.ai/openai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'openai',
+        messages,
+        temperature: options.temperature ?? 0.4,
+        max_tokens: options.max_tokens ?? 800,
+      }),
+    })
+    if (!res.ok) {
+      // Fallback a GET simple si POST falla
+      const systemMsg = messages.find((m) => m.role === 'system')?.content || ''
+      const userMsgs = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+      const prompt = `${systemMsg}\n\nUsuario: ${userMsgs}`
+      const encoded = encodeURIComponent(prompt)
+      const getRes = await fetch(`https://text.pollinations.ai/${encoded}`, { method: 'GET' })
+      if (!getRes.ok) {
+        throw new Error(`Pollinations GET ${getRes.status}`)
+      }
+      return await getRes.text()
+    }
+    const data = await res.json()
+    return data.choices?.[0]?.message?.content ?? ''
   }
 
   private async groqCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
@@ -146,24 +184,17 @@ class LLMClient {
   }
 
   private async geminiCompletion(messages: ChatMessage[], options: { temperature?: number; max_tokens?: number }): Promise<string> {
-    // Google Gemini API (generativelanguage.googleapis.com)
-    // Modelo: gemini-1.5-flash (gratis, rápido)
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.config.apiKey}`
-
-    // Convertir mensajes OpenAI format → Gemini format
     const contents = messages
       .filter((m) => m.role !== 'system')
       .map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       }))
-
-    // El system prompt se combina con el primer mensaje de usuario
     const systemMsg = messages.find((m) => m.role === 'system')
     if (systemMsg && contents.length > 0) {
       contents[0].parts[0].text = systemMsg.content + '\n\n' + contents[0].parts[0].text
     }
-
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -200,7 +231,6 @@ class LLMClient {
     }
     if (this.config.chatId) body.chat_id = this.config.chatId
     if (this.config.userId) body.user_id = this.config.userId
-
     const url = `${(this.config.baseUrl || '').replace(/\/$/, '')}/chat/completions`
     const res = await fetch(url, {
       method: 'POST',
@@ -217,6 +247,10 @@ class LLMClient {
 
   // ===== Visión: analizar imagen =====
   async visionCompletion(messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>): Promise<string> {
+    if (this.config.provider === 'pollinations') {
+      // Pollinations no soporta visión directamente
+      throw new Error('Vision no soportado con Pollinations. Configura Groq o Gemini en Settings.')
+    }
     if (this.config.provider === 'groq') {
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -239,15 +273,11 @@ class LLMClient {
       return data.choices[0]?.message?.content ?? ''
     }
     if (this.config.provider === 'gemini') {
-      // Gemini soporta visión nativamente con gemini-1.5-flash
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.config.apiKey}`
-
-      // Extraer system prompt e imagen
       const systemMsg = messages.find((m) => m.role === 'system')
       const userMsg = messages.find((m) => m.role === 'user')
       let textContent = ''
       let imageContent: string | null = null
-
       if (userMsg) {
         if (typeof userMsg.content === 'string') {
           textContent = userMsg.content
@@ -255,7 +285,6 @@ class LLMClient {
           for (const part of userMsg.content) {
             if (part.type === 'text' && part.text) textContent += part.text
             if (part.type === 'image_url' && part.image_url) {
-              // Extraer base64 de data URL
               const match = part.image_url.url.match(/^data:(.+?);base64,(.+)$/)
               if (match) {
                 imageContent = match[2]
@@ -264,12 +293,10 @@ class LLMClient {
           }
         }
       }
-
       const parts: Array<Record<string, unknown>> = [{ text: (systemMsg?.content || '') + '\n\n' + textContent }]
       if (imageContent) {
         parts.push({ inline_data: { mime_type: 'image/jpeg', data: imageContent } })
       }
-
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -292,9 +319,8 @@ class LLMClient {
 let cachedClient: LLMClient | null = null
 let cachedKey = ''
 
-export async function getLLM(req?: Request): Promise<LLMClient | null> {
+export async function getLLM(req?: Request): Promise<LLMClient> {
   const config = await resolveConfig(req)
-  if (!config) return null
   const cacheKey = `${config.provider}:${config.apiKey}:${config.token || ''}`
   if (cachedClient && cachedKey === cacheKey) return cachedClient
   cachedClient = new LLMClient(config)
@@ -302,7 +328,7 @@ export async function getLLM(req?: Request): Promise<LLMClient | null> {
   return cachedClient
 }
 
-export async function getZai(req?: Request): Promise<LLMClient | null> {
+export async function getZai(req?: Request): Promise<LLMClient> {
   return getLLM(req)
 }
 
