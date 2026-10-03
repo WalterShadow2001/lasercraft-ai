@@ -124,13 +124,75 @@ export async function POST(req: NextRequest) {
     const material: MaterialInfo = MATERIALS[materialType]
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
 
-    // ===== PASO 1: Intentar con LLM (Pollinations.ai por defecto, gratis) =====
-    // Pollinations es una IA real que entiende lenguaje natural
+    // ===== PASO 1: Keyword detector instantáneo para casos claros (<100ms) =====
+    // Si el mensaje tiene alta confianza, generar directamente sin llamar al LLM
+    if (lastUserMessage) {
+      const detected = detectTemplateByKeywords(lastUserMessage.content)
+      if (detected && detected.confidence >= 0.9) {
+        const templateId = detected.templateId
+        if (TEMPLATES.find((t) => t.id === templateId)) {
+          const params = { ...detected.params }
+          if (!params.thickness) params.thickness = material.thickness
+
+          const loopHistory: { attempt: number; valid: boolean; errors: string[] }[] = []
+          let result = null
+          let finalValid = false
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              result = generateFromTemplate(templateId, params, material)
+              const validation = validateSvg(result.svg)
+              loopHistory.push({
+                attempt,
+                valid: validation.valid,
+                errors: validation.issues.filter((i) => i.severity === 'error').map((i) => i.code),
+              })
+              if (validation.valid) {
+                finalValid = true
+                break
+              }
+            } catch (err) {
+              loopHistory.push({
+                attempt,
+                valid: false,
+                errors: [err instanceof Error ? err.message : 'generation_error'],
+              })
+            }
+          }
+
+          logInteraction({
+            userMessage: lastUserMessage.content,
+            templateId,
+            params,
+            success: !!result,
+            validSvg: finalValid,
+            loopAttempts: loopHistory.length,
+            errors: loopHistory.flatMap((l) => l.errors),
+            replyText: detected.reply,
+          }).catch(() => {})
+
+          if (result) {
+            return NextResponse.json<ChatApiResponse>({
+              reply: detected.reply + (finalValid ? '' : '\n\n⚠️ El SVG se generó pero con algunas advertencias.'),
+              action: 'template',
+              svg: result.svg,
+              templateId,
+              params,
+              dimensions: result.dimensions,
+              partCount: result.partCount,
+              loopHistory,
+              questions: null,
+            })
+          }
+        }
+      }
+    }
+
+    // ===== PASO 2: LLM (Pollinations.ai) para lenguaje natural =====
+    // La IA real entiende "necesito algo para guardar mis llaves" → keychain
     const llmClient = await getZai(req)
 
     let parsed: LlmResponse
     try {
-      // Recuperar historial de aprendizaje para few-shot
       const recentSuccesses = await getRecentInteractions(3)
       const userPrefs = await detectUserPreferences()
       let dynamicPrompt = SYSTEM_PROMPT
@@ -171,7 +233,6 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) {
       console.error('[/api/chat] LLM error, usando fallback:', err)
-      // Fallback: detección por keywords
       const detected = lastUserMessage ? detectTemplateByKeywords(lastUserMessage.content) : null
       if (detected) {
         parsed = {
